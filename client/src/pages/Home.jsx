@@ -91,6 +91,8 @@ export default function Home(){
 
   useEffect(()=>{ if (!loading) autoFill() }, [loading, items])
 
+  useEffect(()=>{ if (fillLogs.length) console.warn('masonry-fill-log', fillLogs[fillLogs.length-1]) }, [fillLogs])
+
   useEffect(()=>{
     const el = sentinelRef.current
     if (!el) return
@@ -141,16 +143,14 @@ export default function Home(){
             加载首页轮播图...
           </div>
         ) : carousel.length > 0 ? (
-          <div className="hero-wrap" style={{
-            margin: 0
-          }}>
-            <Carousel items={carousel} interval={5000} fullscreen heightDesktop="72vh" heightMobile="50vh" fit="cover" />
+          <div className="hero-wrap">
+            <Carousel items={carousel} interval={5000} fullscreen heightDesktop="80vh" heightMobile="58vh" fit="cover" />
           </div>
         ) : (
           <div
             className="home-hero hero-wrap"
             style={{
-              minHeight: '72vh',
+              minHeight: '80vh',
               position: 'relative',
               background: items.length > 0 ? `url(${items[0].image_url}) center / cover no-repeat` : 'var(--color-hero-bg)'
             }}
