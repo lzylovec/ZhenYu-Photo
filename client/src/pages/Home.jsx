@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Search, Filter, MapPin, Calendar, List } from 'lucide-react'
 import { api } from '../api'
@@ -16,20 +16,6 @@ export default function Home(){
   const sentinelRef = useRef(null)
   const searchRef = useRef(null)
   const [isMobile, setIsMobile] = useState(false)
-  const rows = useMemo(()=>{
-    const out = []
-    let i = 0
-    const minC = isMobile ? 1 : 3
-    const maxC = isMobile ? 2 : 5
-    while(i < items.length){
-      const remain = items.length - i
-      const count = Math.min(remain, Math.floor(Math.random() * (maxC - minC + 1)) + minC)
-      const row = items.slice(i, i + count)
-      out.push(row)
-      i += count
-    }
-    return out
-  }, [items, isMobile])
 
   async function load(){
     setLoading(true)
@@ -85,7 +71,7 @@ export default function Home(){
             加载首页轮播图...
           </div>
         ) : carousel.length > 0 ? (
-          <div style={{
+          <div className="hero-wrap" style={{
             margin: 0
           }}>
             <Carousel items={carousel} interval={5000} fullscreen heightDesktop="72vh" heightMobile="50vh" fit="cover" />
@@ -93,7 +79,7 @@ export default function Home(){
           </div>
         ) : (
           <div
-            className="home-hero"
+            className="home-hero hero-wrap"
             style={{
               minHeight: '72vh',
               position: 'relative',
@@ -188,62 +174,41 @@ export default function Home(){
             </div>
           </div>
         ) : (
-          <div className="irregular-grid">
-            {rows.map((row, ri) => {
-              const lgIndex = row.length ? (Math.random() < 0.618 ? Math.floor(Math.random()*row.length) : 0) : 0
-              return (
-                <div className="irregular-row" key={ri}>
-                  {row.map((it, ci) => {
-                    const size = ci === lgIndex ? 'lg' : (Math.random() < 0.55 ? 'md' : 'sm')
-                    const factor = size === 'lg' ? 1.5 : size === 'md' ? 1.0 : 0.7
-                    const spacing = isMobile ? Math.floor(8 + Math.random()*4) : Math.floor(20 + Math.random()*20)
-                    const angle = isMobile ? (Math.random()*6 - 3) : ((Math.random()<0.5?-1:1) * (10 + Math.random()*5))
-                    const z = size === 'lg' ? 3 : size === 'md' ? 2 : 1
-                    return (
-                      <Link
-                        key={it.id}
-                        to={`/photos/${it.id}`}
-                        className={`irregular-card size-${size}`}
-                        style={{
-                          '--rot': `${angle}deg`,
-                          marginLeft: spacing,
-                          marginRight: spacing,
-                          zIndex: z,
-                          flexGrow: factor,
-                          flexBasis: 0
-                        }}
-                      >
-                        <div className="photo-card">
-                          <img
-                            src={it.thumb_url}
-                            srcSet={`${it.thumb_url} 480w, ${it.image_url} 2000w`}
-                            sizes="(max-width:480px) 100vw, (max-width:768px) 50vw, 33vw"
-                            loading="lazy"
-                            alt={it.title}
-                            className="irregular-img"
-                          />
-                          <div className="overlay">
-                            <div style={{
-                              fontWeight: 'var(--font-weight-semibold)',
-                              fontSize: '16px',
-                              marginBottom: 'var(--spacing-xs)'
-                            }}>
-                              {it.title}
-                            </div>
-                            <div style={{
-                              opacity: 0.9,
-                              fontSize: '14px'
-                            }}>
-                              {it.author}
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    )
-                  })}
+          <div className="masonry">
+            {items.map((it) => (
+              <Link
+                key={it.id}
+                to={`/photos/${it.id}`}
+                className="card"
+              >
+                <div className="photo-card">
+                  <img
+                    src={it.thumb_url}
+                    srcSet={`${it.thumb_url} 480w, ${it.image_url} 2000w`}
+                    sizes="(max-width:480px) 100vw, (max-width:768px) 50vw, 33vw"
+                    loading="lazy"
+                    alt={it.title}
+                    className="img-hover-effect"
+                    style={{ width: '100%', display: 'block' }}
+                  />
+                  <div className="overlay">
+                    <div style={{
+                      fontWeight: 'var(--font-weight-semibold)',
+                      fontSize: '16px',
+                      marginBottom: 'var(--spacing-xs)'
+                    }}>
+                      {it.title}
+                    </div>
+                    <div style={{
+                      opacity: 0.9,
+                      fontSize: '14px'
+                    }}>
+                      {it.author}
+                    </div>
+                  </div>
                 </div>
-              )
-            })}
+              </Link>
+            ))}
           </div>
         )}
     </div>

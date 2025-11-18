@@ -12,6 +12,10 @@ from .seed import ensure_admin
 from typing import List, Dict
 from PIL import Image
 import io
+from minio import Minio
+from minio.error import S3Error
+import urllib3
+from urllib3.util import Timeout, Retry
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
 
@@ -41,6 +45,106 @@ def normalize_row_urls(row: Dict):
     if 'thumb_url' in row and isinstance(row['thumb_url'], str):
         row['thumb_url'] = normalize_asset(row['thumb_url'])
     return row
+
+def _minio_client():
+    endpoint = os.getenv('MINIO_ENDPOINT')
+    access_key = os.getenv('MINIO_ACCESS_KEY')
+    secret_key = os.getenv('MINIO_SECRET_KEY')
+    secure = os.getenv('MINIO_SECURE', 'false').lower() in ('1','true','yes')
+    bucket = os.getenv('MINIO_BUCKET', 'photos')
+    if not (endpoint and access_key and secret_key):
+        return None, None
+    try:
+        connect_timeout = float(os.getenv('MINIO_CONNECT_TIMEOUT', '2'))
+        read_timeout = float(os.getenv('MINIO_READ_TIMEOUT', '10'))
+        total_retries = int(os.getenv('MINIO_RETRY', '1'))
+        http_client = urllib3.PoolManager(
+            timeout=Timeout(connect=connect_timeout, read=read_timeout),
+            retries=Retry(total=total_retries, backoff_factor=0.2, status_forcelist=[500,502,503,504])
+        )
+        client = Minio(
+            endpoint.replace('http://','').replace('https://',''),
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=secure,
+            http_client=http_client,
+        )
+        found = client.bucket_exists(bucket)
+        if not found:
+            client.make_bucket(bucket)
+        return client, bucket
+    except Exception:
+        return None, None
+
+def _minio_public_base():
+    base = os.getenv('MINIO_PUBLIC_BASE')
+    if base:
+        return base.rstrip('/')
+    endpoint = os.getenv('MINIO_ENDPOINT')
+    if not endpoint:
+        return None
+    secure = os.getenv('MINIO_SECURE', 'false').lower() in ('1','true','yes')
+    proto = 'https' if secure else 'http'
+    host = endpoint.replace('http://','').replace('https://','')
+    return f"{proto}://{host}"
+
+def _minio_url(object_name: str):
+    client, bucket = _minio_client()
+    if not client:
+        return None
+    base = _minio_public_base()
+    if base:
+        return f"{base}/{bucket}/{object_name.lstrip('/')}"
+    try:
+        return client.presigned_get_object(bucket, object_name, expires=timedelta(days=7))
+    except Exception:
+        return None
+
+def _minio_put_bytes(object_name: str, data: bytes, content_type: str = 'application/octet-stream'):
+    client, bucket = _minio_client()
+    if not client:
+        return False
+    try:
+        bio = io.BytesIO(data)
+        client.put_object(bucket, object_name, bio, length=len(data), content_type=content_type)
+        return True
+    except Exception:
+        return False
+
+def _minio_remove(object_name: str):
+    client, bucket = _minio_client()
+    if not client:
+        return False
+    try:
+        client.remove_object(bucket, object_name)
+        return True
+    except Exception:
+        return False
+
+def _minio_key_from_url(url: str):
+    try:
+        base = _minio_public_base()
+        bucket = os.getenv('MINIO_BUCKET', 'photos')
+        if base and url and url.startswith(f"{base}/{bucket}/"):
+            return url.split(f"{base}/{bucket}/", 1)[1]
+        return None
+    except Exception:
+        return None
+
+def _minio_get_bytes(object_name: str):
+    client, bucket = _minio_client()
+    if not client:
+        return None
+    try:
+        resp = client.get_object(bucket, object_name)
+        try:
+            data = resp.read()
+            return data
+        finally:
+            resp.close()
+            resp.release_conn()
+    except Exception:
+        return None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -362,43 +466,72 @@ def upload_photos(request: Request, payload: dict = Depends(auth_required), file
         month_limit = int(os.getenv('UPLOAD_MAX_PER_MONTH_BYTES', '0') or '0')
         cur.execute('SELECT COALESCE(SUM(size_bytes),0) as sum FROM photos WHERE user_id=%s AND DATE(created_at)=CURDATE()', (user_id,))
         day_used = int(cur.fetchone()['sum'] or 0)
-        cur.execute("SELECT COALESCE(SUM(size_bytes),0) as sum FROM photos WHERE user_id=%s AND DATE_FORMAT(created_at,'%Y-%m')=DATE_FORMAT(CURDATE(),'%Y-%m')", (user_id,))
+        cur.execute("SELECT COALESCE(SUM(size_bytes),0) as sum FROM photos WHERE user_id=%s AND DATE_FORMAT(created_at,'%%Y-%%m')=DATE_FORMAT(CURDATE(),'%%Y-%%m')", (user_id,))
         month_used = int(cur.fetchone()['sum'] or 0)
         for uf in files:
             base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
             ext = os.path.splitext(uf.filename)[1].lower() or '.jpg'
-            orig_path = os.path.join(originals, base + ext)
             size_bytes = 0
             uf.file.seek(0)
-            with open(orig_path, 'wb') as out:
-                while True:
-                    chunk = uf.file.read(1024*1024)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    size_bytes += len(chunk)
+            content = b''
+            while True:
+                chunk = uf.file.read(1024*1024)
+                if not chunk:
+                    break
+                content += chunk
+                size_bytes += len(chunk)
             if day_limit and (day_used + size_bytes) > day_limit:
                 raise HTTPException(status_code=429, detail='超出每日上传总量限制')
             if month_limit and (month_used + size_bytes) > month_limit:
                 raise HTTPException(status_code=429, detail='超出每月上传总量限制')
             day_used += size_bytes
             month_used += size_bytes
+            
+            image_url = None
+            thumb_url = None
+            original_url = None
             try:
-                img = Image.open(orig_path)
+                img = Image.open(io.BytesIO(content))
                 img_copy = img.copy()
                 img_copy.thumbnail((2000, 2000))
-                proc_path = os.path.join(processed, base + '.webp')
-                img_copy.save(proc_path, format='WEBP', quality=80)
+                buf_proc = io.BytesIO()
+                img_copy.save(buf_proc, format='WEBP', quality=80)
+                proc_key = f"processed/{base}.webp"
+                ok_proc = _minio_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
                 th = img.copy()
                 th.thumbnail((480, 480))
-                thumb_path = os.path.join(thumbs, base + '_thumb.webp')
-                th.save(thumb_path, format='WEBP', quality=70)
-                image_url = asset_url(f'uploads/processed/{os.path.basename(proc_path)}')
-                thumb_url = asset_url(f'uploads/thumbs/{os.path.basename(thumb_path)}')
+                buf_th = io.BytesIO()
+                th.save(buf_th, format='WEBP', quality=70)
+                th_key = f"thumbs/{base}_thumb.webp"
+                ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+                orig_key = f"originals/{base}{ext}"
+                ok_orig = _minio_put_bytes(orig_key, content, content_type=uf.content_type or 'application/octet-stream')
+                image_url = _minio_url(proc_key) if ok_proc else None
+                thumb_url = _minio_url(th_key) if ok_th else None
+                original_url = _minio_url(orig_key) if ok_orig else None
             except Exception:
-                image_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
-                thumb_url = image_url
-            original_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
+                pass
+            
+            if not (image_url and thumb_url and original_url):
+                orig_path = os.path.join(originals, base + ext)
+                proc_path = os.path.join(processed, base + '.webp')
+                thumb_path = os.path.join(thumbs, base + '_thumb.webp')
+                with open(orig_path, 'wb') as out:
+                    out.write(content)
+                try:
+                    img = Image.open(orig_path)
+                    img_copy = img.copy()
+                    img_copy.thumbnail((2000, 2000))
+                    img_copy.save(proc_path, format='WEBP', quality=80)
+                    th = img.copy()
+                    th.thumbnail((480, 480))
+                    th.save(thumb_path, format='WEBP', quality=70)
+                    image_url = asset_url(f'uploads/processed/{os.path.basename(proc_path)}')
+                    thumb_url = asset_url(f'uploads/thumbs/{os.path.basename(thumb_path)}')
+                except Exception:
+                    image_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
+                    thumb_url = image_url
+                original_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
             t = title or uf.filename
             cur.execute('INSERT INTO photos (user_id, title, description, camera, settings, category, original_url, image_url, thumb_url, size_bytes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (user_id, t, description, camera, settings, category, original_url, image_url, thumb_url, size_bytes))
             photo_id = cur.lastrowid
@@ -416,6 +549,157 @@ def upload_photos(request: Request, payload: dict = Depends(auth_required), file
             items.append({'id': photo_id, 'image_url': image_url, 'thumb_url': thumb_url})
     conn.close()
     return {'ok': True, 'items': items}
+
+@app.post('/api/admin/minio-import')
+def admin_minio_import(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
+    role_required(payload, 'admin')
+    require_csrf(request, payload)
+    key = _minio_key_from_url(url) or (url or '').strip()
+    if not key:
+        raise HTTPException(status_code=400, detail='无效URL')
+    data = _minio_get_bytes(key)
+    if not data:
+        raise HTTPException(status_code=404, detail='对象不存在或不可读取')
+    base = os.path.splitext(os.path.basename(key))[0]
+    ext = os.path.splitext(key)[1].lower() or '.jpg'
+    image_url = None
+    thumb_url = None
+    try:
+        img = Image.open(io.BytesIO(data))
+        img_copy = img.copy()
+        img_copy.thumbnail((2000, 2000))
+        buf_proc = io.BytesIO()
+        img_copy.save(buf_proc, format='WEBP', quality=80)
+        proc_key = f"processed/{base}.webp"
+        ok_proc = _minio_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
+        th = img.copy()
+        th.thumbnail((480, 480))
+        buf_th = io.BytesIO()
+        th.save(buf_th, format='WEBP', quality=70)
+        th_key = f"thumbs/{base}_thumb.webp"
+        ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+        image_url = _minio_url(proc_key) if ok_proc else None
+        thumb_url = _minio_url(th_key) if ok_th else None
+    except Exception:
+        pass
+    original_url = _minio_url(key)
+    conn = get_conn()
+    with conn.cursor() as cur:
+        t = title or os.path.basename(key)
+        cur.execute('INSERT INTO photos (user_id, title, description, camera, settings, category, original_url, image_url, thumb_url, size_bytes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (payload['id'], t, description, camera, settings, category, original_url, image_url or original_url, thumb_url or image_url or original_url, len(data)))
+        photo_id = cur.lastrowid
+        tags_arr = [s.strip() for s in (tags or '').split(',') if s.strip()]
+        for tg in tags_arr:
+            cur.execute('SELECT id FROM tags WHERE name=%s', (tg,))
+            r = cur.fetchone()
+            tag_id = r['id'] if r else None
+            if tag_id is None:
+                cur.execute('INSERT INTO tags (name) VALUES (%s)', (tg,))
+                tag_id = cur.lastrowid
+            cur.execute('INSERT IGNORE INTO photo_tags (photo_id, tag_id) VALUES (%s,%s)', (photo_id, tag_id))
+    conn.close()
+    return {'ok': True, 'id': photo_id, 'image_url': image_url or original_url, 'thumb_url': thumb_url or image_url or original_url}
+
+@app.post('/api/admin/minio-upload')
+def admin_minio_upload(request: Request, payload: dict = Depends(auth_required), file: UploadFile = File(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
+    role_required(payload, 'admin')
+    require_csrf(request, payload)
+    base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
+    ext = os.path.splitext(file.filename or '')[1].lower() or '.jpg'
+    content = file.file.read()
+    image_url = None
+    thumb_url = None
+    original_url = None
+    try:
+        img = Image.open(io.BytesIO(content))
+        img_copy = img.copy(); img_copy.thumbnail((2000, 2000))
+        buf_proc = io.BytesIO(); img_copy.save(buf_proc, format='WEBP', quality=80)
+        th = img.copy(); th.thumbnail((480, 480))
+        buf_th = io.BytesIO(); th.save(buf_th, format='WEBP', quality=70)
+        ok_proc = _minio_put_bytes(f"processed/{base}.webp", buf_proc.getvalue(), content_type='image/webp')
+        ok_th = _minio_put_bytes(f"thumbs/{base}_thumb.webp", buf_th.getvalue(), content_type='image/webp')
+        ok_orig = _minio_put_bytes(f"originals/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
+        image_url = _minio_url(f"processed/{base}.webp") if ok_proc else None
+        thumb_url = _minio_url(f"thumbs/{base}_thumb.webp") if ok_th else None
+        original_url = _minio_url(f"originals/{base}{ext}") if ok_orig else None
+    except Exception:
+        pass
+    if not (image_url and thumb_url and original_url):
+        uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
+        originals = os.path.join(uploads_root, 'originals')
+        processed = os.path.join(uploads_root, 'processed')
+        thumbs = os.path.join(uploads_root, 'thumbs')
+        orig_path = os.path.join(originals, base + ext)
+        proc_path = os.path.join(processed, base + '.webp')
+        th_path = os.path.join(thumbs, base + '_thumb.webp')
+        with open(orig_path, 'wb') as out:
+            out.write(content)
+        try:
+            img = Image.open(orig_path)
+            img_copy = img.copy(); img_copy.thumbnail((2000, 2000))
+            img_copy.save(proc_path, format='WEBP', quality=80)
+            th = img.copy(); th.thumbnail((480, 480))
+            th.save(th_path, format='WEBP', quality=70)
+            image_url = asset_url(f'uploads/processed/{os.path.basename(proc_path)}')
+            thumb_url = asset_url(f'uploads/thumbs/{os.path.basename(th_path)}')
+        except Exception:
+            image_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
+            thumb_url = image_url
+        original_url = asset_url(f'uploads/originals/{os.path.basename(orig_path)}')
+    conn = get_conn()
+    with conn.cursor() as cur:
+        t = title or file.filename
+        cur.execute('INSERT INTO photos (user_id, title, description, camera, settings, category, original_url, image_url, thumb_url, size_bytes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (payload['id'], t, description, camera, settings, category, original_url, image_url, thumb_url, len(content)))
+        photo_id = cur.lastrowid
+        tags_arr = [s.strip() for s in (tags or '').split(',') if s.strip()]
+        for tg in tags_arr:
+            cur.execute('SELECT id FROM tags WHERE name=%s', (tg,))
+            r = cur.fetchone(); tag_id = r['id'] if r else None
+            if tag_id is None:
+                cur.execute('INSERT INTO tags (name) VALUES (%s)', (tg,))
+                tag_id = cur.lastrowid
+            cur.execute('INSERT IGNORE INTO photo_tags (photo_id, tag_id) VALUES (%s,%s)', (photo_id, tag_id))
+    conn.close()
+    return {'ok': True, 'id': photo_id, 'image_url': image_url, 'thumb_url': thumb_url}
+
+@app.post('/api/admin/minio-delete')
+def admin_minio_delete(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), remove_related: bool = Form(True)):
+    role_required(payload, 'admin')
+    require_csrf(request, payload)
+    key = _minio_key_from_url(url) or (url or '').strip()
+    if not key:
+        raise HTTPException(status_code=400, detail='无效URL')
+    _minio_remove(key)
+    if not remove_related:
+        return {'ok': True}
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT * FROM photos WHERE original_url=%s OR image_url=%s OR thumb_url=%s', (url, url, url))
+        rows = cur.fetchall()
+        for photo in rows:
+            pid = photo['id']
+            cur.execute('SELECT id, image_url, thumb_url FROM home_carousel WHERE photo_id=%s', (pid,))
+            related = cur.fetchall()
+            for hc in related:
+                ik = _minio_key_from_url(hc.get('image_url') or '')
+                tk = _minio_key_from_url(hc.get('thumb_url') or '')
+                if ik:
+                    _minio_remove(ik)
+                if tk:
+                    _minio_remove(tk)
+                cur.execute('DELETE FROM home_carousel WHERE id=%s', (hc['id'],))
+            for u in [photo.get('image_url'), photo.get('thumb_url'), photo.get('original_url')]:
+                if u:
+                    k = _minio_key_from_url(u)
+                    if k:
+                        _minio_remove(k)
+            cur.execute('DELETE FROM photo_tags WHERE photo_id=%s', (pid,))
+            cur.execute('DELETE FROM likes WHERE photo_id=%s', (pid,))
+            cur.execute('DELETE FROM favorites WHERE photo_id=%s', (pid,))
+            cur.execute('DELETE FROM comments WHERE photo_id=%s', (pid,))
+            cur.execute('DELETE FROM photos WHERE id=%s', (pid,))
+    conn.close()
+    return {'ok': True}
 
 def _process_carousel_image(content: bytes):
     img = Image.open(io.BytesIO(content))
@@ -462,20 +746,29 @@ def admin_add_carousel(request: Request, payload: dict = Depends(auth_required),
     if file.content_type not in ('image/jpeg', 'image/png', 'image/webp'):
         raise HTTPException(status_code=400, detail='仅支持JPG/PNG图片')
     content = file.file.read()
-    uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
-    car_dir = os.path.join(uploads_root, 'carousel')
-    car_thumbs = os.path.join(uploads_root, 'carousel_thumbs')
     try:
         img, thumb = _process_carousel_image(content)
     except Exception:
         raise HTTPException(status_code=400, detail='图片处理失败或格式不支持')
     base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
-    proc_path = os.path.join(car_dir, base + '.webp')
-    thumb_path = os.path.join(car_thumbs, base + '_thumb.webp')
-    img.save(proc_path, format='WEBP', quality=85)
-    thumb.save(thumb_path, format='WEBP', quality=75)
-    image_url = asset_url(f'uploads/carousel/{os.path.basename(proc_path)}')
-    thumb_url = asset_url(f'uploads/carousel_thumbs/{os.path.basename(thumb_path)}')
+    buf_img = io.BytesIO(); img.save(buf_img, format='WEBP', quality=85)
+    buf_th = io.BytesIO(); thumb.save(buf_th, format='WEBP', quality=75)
+    car_key = f"carousel/{base}.webp"
+    th_key = f"carousel_thumbs/{base}_thumb.webp"
+    ok_img = _minio_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
+    ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+    image_url = _minio_url(car_key) if ok_img else None
+    thumb_url = _minio_url(th_key) if ok_th else None
+    if not (image_url and thumb_url):
+        uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
+        car_dir = os.path.join(uploads_root, 'carousel')
+        car_thumbs = os.path.join(uploads_root, 'carousel_thumbs')
+        proc_path = os.path.join(car_dir, base + '.webp')
+        thumb_path = os.path.join(car_thumbs, base + '_thumb.webp')
+        img.save(proc_path, format='WEBP', quality=85)
+        thumb.save(thumb_path, format='WEBP', quality=75)
+        image_url = asset_url(f'uploads/carousel/{os.path.basename(proc_path)}')
+        thumb_url = asset_url(f'uploads/carousel_thumbs/{os.path.basename(thumb_path)}')
     conn = get_conn()
     with conn.cursor() as cur:
         # 同步到作品库
@@ -533,6 +826,12 @@ def admin_delete_carousel(cid: int, request: Request, payload: dict = Depends(au
             raise HTTPException(status_code=404, detail='轮播图不存在')
         image = os.path.join(car_dir, os.path.basename(row['image_url'] or ''))
         thumb = os.path.join(car_thumbs, os.path.basename(row['thumb_url'] or ''))
+        ik = _minio_key_from_url(row.get('image_url') or '')
+        tk = _minio_key_from_url(row.get('thumb_url') or '')
+        if ik:
+            _minio_remove(ik)
+        if tk:
+            _minio_remove(tk)
         cur.execute('DELETE FROM home_carousel WHERE id=%s', (cid,))
     conn.close()
     try:
@@ -572,12 +871,21 @@ def admin_replace_carousel(cid: int, request: Request, payload: dict = Depends(a
         if row['thumb_url']:
             old_thumb = os.path.join(car_thumbs, os.path.basename(row['thumb_url']))
         base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
-        proc_path = os.path.join(car_dir, base + '.webp')
-        thumb_path = os.path.join(car_thumbs, base + '_thumb.webp')
-        img.save(proc_path, format='WEBP', quality=85)
-        thumb.save(thumb_path, format='WEBP', quality=75)
-        image_url = asset_url(f'uploads/carousel/{os.path.basename(proc_path)}')
-        thumb_url = asset_url(f'uploads/carousel_thumbs/{os.path.basename(thumb_path)}')
+        buf_img = io.BytesIO(); img.save(buf_img, format='WEBP', quality=85)
+        buf_th = io.BytesIO(); thumb.save(buf_th, format='WEBP', quality=75)
+        car_key = f"carousel/{base}.webp"
+        th_key = f"carousel_thumbs/{base}_thumb.webp"
+        ok_img = _minio_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
+        ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+        image_url = _minio_url(car_key) if ok_img else None
+        thumb_url = _minio_url(th_key) if ok_th else None
+        if not (image_url and thumb_url):
+            proc_path = os.path.join(car_dir, base + '.webp')
+            thumb_path = os.path.join(car_thumbs, base + '_thumb.webp')
+            img.save(proc_path, format='WEBP', quality=85)
+            thumb.save(thumb_path, format='WEBP', quality=75)
+            image_url = asset_url(f'uploads/carousel/{os.path.basename(proc_path)}')
+            thumb_url = asset_url(f'uploads/carousel_thumbs/{os.path.basename(thumb_path)}')
         # 同步到作品库
         title = os.path.splitext(file.filename or '')[0] or '首页轮播图'
         cur.execute('INSERT INTO photos (user_id, title, description, camera, settings, category, original_url, image_url, thumb_url, size_bytes) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)', (payload['id'], title, None, None, None, 'carousel', None, image_url, thumb_url, len(content)))
@@ -675,10 +983,16 @@ def delete_photo(photo_id: int, request: Request, payload: dict = Depends(auth_r
             cur.execute('DELETE FROM home_carousel WHERE id=%s', (hc['id'],))
             try:
                 if hc.get('image_url'):
+                    key = _minio_key_from_url(hc['image_url'])
+                    if key:
+                        _minio_remove(key)
                     p = os.path.join(car_dir, os.path.basename(hc['image_url']))
                     if os.path.exists(p):
                         os.remove(p)
                 if hc.get('thumb_url'):
+                    key = _minio_key_from_url(hc['thumb_url'])
+                    if key:
+                        _minio_remove(key)
                     t = os.path.join(car_thumbs, os.path.basename(hc['thumb_url']))
                     if os.path.exists(t):
                         os.remove(t)
@@ -691,16 +1005,18 @@ def delete_photo(photo_id: int, request: Request, payload: dict = Depends(auth_r
         cur.execute('DELETE FROM photos WHERE id=%s', (photo_id,))
     conn.close()
     try:
-        if photo.get('image_url'):
-            target_dir = processed if '/uploads/processed/' in (photo['image_url'] or '') or '/processed/' in (photo['image_url'] or '') else car_dir
-            p = os.path.join(target_dir, os.path.basename(photo['image_url']))
-            if os.path.exists(p):
-                os.remove(p)
-        if photo.get('thumb_url'):
-            target_dir = thumbs if '/uploads/thumbs/' in (photo['thumb_url'] or '') or '/thumbs/' in (photo['thumb_url'] or '') else car_thumbs
-            t = os.path.join(target_dir, os.path.basename(photo['thumb_url']))
-            if os.path.exists(t):
-                os.remove(t)
+        for u in [photo.get('image_url'), photo.get('thumb_url'), photo.get('original_url')]:
+            if u:
+                key = _minio_key_from_url(u)
+                if key:
+                    _minio_remove(key)
+            if u:
+                
+                dirs = [processed, thumbs, car_dir, car_thumbs]
+                for d in dirs:
+                    p = os.path.join(d, os.path.basename(u))
+                    if os.path.exists(p):
+                        os.remove(p)
     except Exception:
         pass
     return {'ok': True}
