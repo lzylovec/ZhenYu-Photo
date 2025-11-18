@@ -17,9 +17,36 @@ export default function Detail(){
   useEffect(()=>{ load() },[id])
 
   const authed = !!localStorage.getItem('token')
-  async function like(){ if(!authed) { navigate('/admin-login'); return; } await api.post(`/photos/${id}/like`); load() }
-  async function fav(){ if(!authed) { navigate('/admin-login'); return; } await api.post(`/photos/${id}/favorite`); load() }
-  async function sendComment(){ if(!authed) { navigate('/admin-login'); return; } if(!comment) return; await api.post(`/photos/${id}/comment`, { content: comment }); setComment(''); load() }
+  async function ensureCsrf(){
+    if(!authed) { navigate('/admin-login'); return false }
+    const csrf = localStorage.getItem('csrf')
+    if(!csrf){
+      try { const r = await api.get('/csrf'); localStorage.setItem('csrf', r.data?.token || '') } catch {}
+    }
+    return true
+  }
+  async function like(){
+    if(!(await ensureCsrf())) return
+    try { await api.post(`/photos/${id}/like`); await load() }
+    catch(e){
+      try { const r = await api.get('/csrf'); localStorage.setItem('csrf', r.data?.token || ''); await api.post(`/photos/${id}/like`); await load() } catch{}
+    }
+  }
+  async function fav(){
+    if(!(await ensureCsrf())) return
+    try { await api.post(`/photos/${id}/favorite`); await load() }
+    catch(e){
+      try { const r = await api.get('/csrf'); localStorage.setItem('csrf', r.data?.token || ''); await api.post(`/photos/${id}/favorite`); await load() } catch{}
+    }
+  }
+  async function sendComment(){
+    if(!(await ensureCsrf())) return
+    if(!comment) return
+    try { await api.post(`/photos/${id}/comment`, { content: comment }); setComment(''); await load() }
+    catch(e){
+      try { const r = await api.get('/csrf'); localStorage.setItem('csrf', r.data?.token || ''); await api.post(`/photos/${id}/comment`, { content: comment }); setComment(''); await load() } catch{}
+    }
+  }
 
   if (!data) return <div className="fade-in" style={{padding: 'var(--spacing-xl)', textAlign: 'center'}}>加载中...</div>
 
