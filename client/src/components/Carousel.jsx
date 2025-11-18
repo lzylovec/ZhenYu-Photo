@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-export default function Carousel({ items = [], interval = 5000, fullscreen = false, heightDesktop = '72vh', heightMobile = '50vh', fit = 'cover' }){
+export default function Carousel({ items = [], interval = 5000, fullscreen = false, heightDesktop = '72vh', heightMobile = '50vh', fit = 'cover' }) {
   const [index, setIndex] = useState(0)
   const timerRef = useRef(null)
   const touchRef = useRef({ x: 0, y: 0, active: false })
@@ -17,7 +17,7 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
   }, [items.length, interval])
 
   useEffect(() => {
-    function calc(){
+    function calc() {
       const w = window.innerWidth
       setHeight(w >= 1024 ? heightDesktop : heightMobile)
       setIsDesktop(w >= 1024)
@@ -27,28 +27,28 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
     return () => window.removeEventListener('resize', calc)
   }, [heightDesktop, heightMobile])
 
-  function go(i){
+  function go(i) {
     if (!items.length) return
     const n = (i + items.length) % items.length
     setIndex(n)
   }
 
-  function onTouchStart(e){
+  function onTouchStart(e) {
     const t = e.touches[0]
     touchRef.current = { x: t.clientX, y: t.clientY, active: true }
     clearInterval(timerRef.current)
   }
-  function onTouchMove(e){
+  function onTouchMove(e) {
     if (!touchRef.current.active) return
     const t = e.touches[0]
     const dx = t.clientX - touchRef.current.x
     const threshold = 30
-    if (Math.abs(dx) > threshold){
+    if (Math.abs(dx) > threshold) {
       go(index + (dx < 0 ? 1 : -1))
       touchRef.current.active = false
     }
   }
-  function onTouchEnd(){
+  function onTouchEnd() {
     touchRef.current.active = false
     timerRef.current = setInterval(() => {
       setIndex((i) => (i + 1) % items.length)
@@ -82,7 +82,7 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
         }}
       >
         {items.map((it, i) => (
-          <div key={it.id || i} style={{flex: '0 0 100%', position: 'relative', height: fullscreen ? '100%' : 'auto'}}>
+          <div key={it.id || i} style={{ flex: '0 0 100%', position: 'relative', height: fullscreen ? '100%' : 'auto' }}>
             <img
               src={it.image_url}
               srcSet={`${it.thumb_url || it.image_url} 480w, ${it.image_url} 2560w`}
@@ -90,7 +90,7 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
               loading={i === index ? 'eager' : 'lazy'}
               fetchpriority={i === index ? 'high' : 'low'}
               decoding="async"
-              alt={it.title || `轮播图 ${i+1}`}
+              alt={it.title || `轮播图 ${i + 1}`}
               style={{
                 width: '100%',
                 height: fullscreen ? '100%' : 'auto',
@@ -125,8 +125,8 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
             left: 0,
             right: 0,
             bottom: 0,
-            height: 'clamp(64px, 12vw, 100px)',
-            background: 'linear-gradient(to bottom, rgba(0,0,0,0), var(--color-bg))',
+            height: 'clamp(80px, 12vw, 60px)',/*控制渐变高度厚度*/
+            background: 'linear-gradient(to bottom, rgba(255,255,255,0), var(--color-bg))',
             pointerEvents: 'none'
           }}
         />
@@ -168,7 +168,7 @@ export default function Carousel({ items = [], interval = 5000, fullscreen = fal
           <button
             key={i}
             onClick={() => go(i)}
-            aria-label={`第${i+1}张`}
+            aria-label={`第${i + 1}张`}
             className="btn"
             style={{
               width: '10px', height: '10px', borderRadius: '50%', padding: 0,

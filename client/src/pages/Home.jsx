@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
+import { api } from '../api'
 import { Search, Filter, MapPin, Calendar, List } from 'lucide-react'
 import { api } from '../api'
 import Carousel from '../components/Carousel'
@@ -11,19 +12,40 @@ export default function Home(){
   const [category, setCategory] = useState('')
   const [tag, setTag] = useState('')
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [status, setStatus] = useState('idle')
   const [cLoading, setCLoading] = useState(true)
   const [lift, setLift] = useState(false)
   const sentinelRef = useRef(null)
   const searchRef = useRef(null)
   const [isMobile, setIsMobile] = useState(false)
+  const location = useLocation()
+  const reqRef = useRef(null)
 
-  async function load(){
+  async function load(params){
+    const qp = typeof params?.q === 'string' ? params.q : q
+    const cp = typeof params?.category === 'string' ? params.category : category
+    const tp = typeof params?.tag === 'string' ? params.tag : tag
+    if (reqRef.current) {
+      try { reqRef.current.abort() } catch(_) {}
+    }
+    const ctrl = new AbortController()
+    reqRef.current = ctrl
     setLoading(true)
+    setError('')
+    setStatus('loading')
     try {
-      const { data } = await api.get('/photos', { params: { q, category, tag } })
-      setItems(data)
-    } catch (error) {
-      console.error('加载照片失败:', error)
+      const { data } = await api.get('/photos', { params: { q: qp, category: cp, tag: tp }, signal: ctrl.signal })
+      const arr = Array.isArray(data) ? data : []
+      setItems(arr)
+      setStatus(arr.length ? 'success' : 'empty')
+    } catch (e) {
+      const isCancel = e?.code === 'ERR_CANCELED' || e?.name === 'AbortError'
+      if (isCancel) {
+        return
+      }
+      setError('加载失败')
+      setStatus('error')
     } finally {
       setLoading(false)
     }
@@ -42,6 +64,13 @@ export default function Home(){
   }
 
   useEffect(()=>{ load(); loadCarousel() },[])
+
+  useEffect(()=>{
+    const p = new URLSearchParams(location.search)
+    const v = p.get('q') || ''
+    setQ(v)
+    load({ q: v })
+  }, [location.search])
 
   useEffect(()=>{
     const fn = ()=> setIsMobile(window.innerWidth <= 768)
@@ -125,13 +154,13 @@ export default function Home(){
             />
             <Calendar size={18} style={{position:'absolute', left: 14, top: '50%', transform:'translateY(-50%)', color:'var(--color-muted)'}} />
           </div>
-          <button className="btn btn-primary" onClick={load} style={{padding: '12px 20px'}}>
+          <button className="btn btn-primary" onClick={()=>load({ q, category, tag })} style={{padding: '12px 20px'}}>
             <Search size={18} />
           </button>
         </div>
       </div>
 
-        {loading ? (
+        {status === 'loading' ? (
           <div style={{
             textAlign: 'center',
             padding: 'var(--spacing-2xl)',
@@ -154,7 +183,11 @@ export default function Home(){
               正在加载摄影作品...
             </div>
           </div>
-        ) : items.length === 0 ? (
+        ) : status === 'error' ? (
+          <div className="card" style={{maxWidth: 800, margin: '0 auto', textAlign: 'center', color: 'var(--color-secondary)'}}>
+            加载失败，请稍后重试
+          </div>
+        ) : status === 'empty' ? (
           <div style={{
             textAlign: 'center',
             padding: 'var(--spacing-2xl)',
@@ -183,8 +216,8 @@ export default function Home(){
               >
                 <div className="photo-card">
                   <img
-                    src={it.thumb_url}
-                    srcSet={`${it.thumb_url} 480w, ${it.image_url} 2000w`}
+                    src={it.thumb_url || it.image_url}
+                    srcSet={`${(it.thumb_url || it.image_url) ?? ''} 480w, ${(it.image_url || it.thumb_url) ?? ''} 2000w`}
                     sizes="(max-width:480px) 100vw, (max-width:768px) 50vw, 33vw"
                     loading="lazy"
                     alt={it.title}

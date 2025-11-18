@@ -339,9 +339,9 @@ def my_photos(payload: dict = Depends(auth_required)):
     conn = get_conn()
     with conn.cursor() as cur:
         if payload.get('role') in ('admin','super_admin'):
-            cur.execute('SELECT id, title, thumb_url, image_url, created_at FROM photos ORDER BY id DESC')
+            cur.execute('SELECT id, title, COALESCE(thumb_url, image_url, original_url) AS thumb_url, COALESCE(image_url, original_url) AS image_url, created_at FROM photos ORDER BY id DESC')
         else:
-            cur.execute('SELECT id, title, thumb_url, image_url, created_at FROM photos WHERE user_id=%s ORDER BY id DESC', (payload['id'],))
+            cur.execute('SELECT id, title, COALESCE(thumb_url, image_url, original_url) AS thumb_url, COALESCE(image_url, original_url) AS image_url, created_at FROM photos WHERE user_id=%s ORDER BY id DESC', (payload['id'],))
         rows = cur.fetchall()
     conn.close()
     return [normalize_row_urls(r) for r in rows]
@@ -414,7 +414,12 @@ def list_photos(q: str = None, tag: str = None, category: str = None, photograph
         tagJoin = ' JOIN photo_tags pt ON pt.photo_id = photos.id JOIN tags t ON t.id = pt.tag_id AND t.name = %s'
         params.append(tag)
     sql = f"""
-      SELECT photos.id, photos.title, photos.thumb_url, photos.image_url, photos.category, users.username as author
+      SELECT photos.id,
+             photos.title,
+             COALESCE(photos.thumb_url, photos.image_url, photos.original_url) AS thumb_url,
+             COALESCE(photos.image_url, photos.original_url) AS image_url,
+             photos.category,
+             users.username AS author
       FROM photos JOIN users ON users.id = photos.user_id {tagJoin} {where}
       ORDER BY photos.id DESC LIMIT %s OFFSET %s
     """
