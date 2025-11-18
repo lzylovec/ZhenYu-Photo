@@ -222,12 +222,15 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid var(--color-border);
   box-shadow: var(--shadow);
   transition: var(--transition);
 }
 .nav-avatar-box:hover {
   transform: translateY(-2px) scale(1.03);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--color-border-strong);
   box-shadow: var(--shadow-hover);
 }
 /* 调整头像图片放大放小 */
@@ -565,28 +568,47 @@ body {
 }
 /* 导航栏搜索 */
 .nav-search {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: var(--spacing-xs);
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--color-border);
-  border-radius: 999px;
-  padding: 4px 15px;
-  box-shadow: var(--shadow);
-  width: min(180px, 50vw);
+  background: transparent;
+  backdrop-filter: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  box-shadow: none;
+  width: min(150px, 45vw);
+  color: var(--color-text-light);
+  position: relative;
+  transition: var(--transition);
 }
 .nav-search .input {
   border: none;
   background: transparent;
-  padding: 6px 10px;
+  padding: 0;
   box-shadow: none;
+  flex: 1;
+  color: var(--color-text-light);
 }
+.nav-search .input::placeholder { color: var(--color-muted); }
+.nav-search::after {
+  content: '';
+  position: absolute;
+  left: 0; bottom: 0;
+  height: 2px; width: 0;
+  background: var(--color-primary);
+  transition: width 0.35s ease-in-out;
+}
+.nav-search:hover { background: rgba(44, 62, 80, 0.05); }
+.nav-search:hover::after,
+.nav-search:focus-within::after { width: 100%; }
+.nav-search .btn { background: transparent; border: none; box-shadow: none; padding: 0; color: var(--color-text-light); border-radius: var(--radius-sm); }
+.nav-search .btn:hover, .nav-search .btn:focus { color: var(--color-primary); }
 @media (min-width: 640px) {
-  .nav-search { width: min(220px, 35vw); }
+  .nav-search { width: min(190px, 33vw); }
 }
 @media (min-width: 1024px) {
-  .nav-search { width: 240px; }
+  .nav-search { width: 210px; }
 }
 
 /* 搜索按钮圆角与搜索框一致 */
