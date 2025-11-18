@@ -1,8 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { api } from '../api'
-import { Search, Filter, MapPin, Calendar, List } from 'lucide-react'
-import { api } from '../api'
 import Carousel from '../components/Carousel'
 
 export default function Home(){
@@ -12,40 +10,18 @@ export default function Home(){
   const [category, setCategory] = useState('')
   const [tag, setTag] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [status, setStatus] = useState('idle')
   const [cLoading, setCLoading] = useState(true)
   const [lift, setLift] = useState(false)
-  const sentinelRef = useRef(null)
-  const searchRef = useRef(null)
   const [isMobile, setIsMobile] = useState(false)
   const location = useLocation()
-  const reqRef = useRef(null)
 
-  async function load(params){
-    const qp = typeof params?.q === 'string' ? params.q : q
-    const cp = typeof params?.category === 'string' ? params.category : category
-    const tp = typeof params?.tag === 'string' ? params.tag : tag
-    if (reqRef.current) {
-      try { reqRef.current.abort() } catch(_) {}
-    }
-    const ctrl = new AbortController()
-    reqRef.current = ctrl
+  async function load(){
     setLoading(true)
-    setError('')
-    setStatus('loading')
     try {
-      const { data } = await api.get('/photos', { params: { q: qp, category: cp, tag: tp }, signal: ctrl.signal })
-      const arr = Array.isArray(data) ? data : []
-      setItems(arr)
-      setStatus(arr.length ? 'success' : 'empty')
-    } catch (e) {
-      const isCancel = e?.code === 'ERR_CANCELED' || e?.name === 'AbortError'
-      if (isCancel) {
-        return
-      }
-      setError('加载失败')
-      setStatus('error')
+      const { data } = await api.get('/photos', { params: { q, category, tag } })
+      setItems(data)
+    } catch (error) {
+      console.error('加载照片失败:', error)
     } finally {
       setLoading(false)
     }
@@ -63,14 +39,13 @@ export default function Home(){
     }
   }
 
-  useEffect(()=>{ load(); loadCarousel() },[])
-
+  useEffect(()=>{ loadCarousel() },[])
   useEffect(()=>{
-    const p = new URLSearchParams(location.search)
-    const v = p.get('q') || ''
-    setQ(v)
-    load({ q: v })
+    const qs = new URLSearchParams(location.search)
+    const qParam = qs.get('q') || ''
+    setQ(qParam)
   }, [location.search])
+  useEffect(()=>{ load() }, [q, category, tag])
 
   useEffect(()=>{
     const fn = ()=> setIsMobile(window.innerWidth <= 768)
@@ -79,16 +54,7 @@ export default function Home(){
     return ()=> window.removeEventListener('resize', fn)
   }, [])
 
-  useEffect(()=>{
-    const el = sentinelRef.current
-    if (!el) return
-    const io = new IntersectionObserver((entries)=>{
-      const e = entries[0]
-      setLift(e.isIntersecting)
-    }, { threshold: 0, rootMargin: '0px 0px -20% 0px' })
-    io.observe(el)
-    return () => io.disconnect()
-  }, [sentinelRef.current])
+  
 
   return (
     <div className="fade-in">
@@ -104,7 +70,6 @@ export default function Home(){
             margin: 0
           }}>
             <Carousel items={carousel} interval={5000} fullscreen heightDesktop="72vh" heightMobile="50vh" fit="cover" />
-            <div ref={sentinelRef} style={{height: 1}} />
           </div>
         ) : (
           <div
@@ -122,45 +87,8 @@ export default function Home(){
         )}
       </div>
 
-      <div style={{padding: '0 var(--spacing-xl)', marginTop: 'clamp(20px, 3vh, 30px)'}}>
-        <div ref={searchRef} className="hero-search" style={{position: 'static', transform: `${lift ? 'translateY(-6px)' : 'translateY(0)'} translateZ(0)`, margin: '0 auto', maxWidth: 1100, transition: 'transform 0.35s ease-in-out, box-shadow 0.35s ease-in-out', willChange: 'transform'}}>
-          <div style={{position:'relative'}}>
-            <input
-              className="input"
-              value={q}
-              onChange={e=>setQ(e.target.value)}
-              placeholder="地点 / 关键词"
-              style={{paddingLeft: 40}}
-            />
-            <MapPin size={18} style={{position:'absolute', left: 14, top: '50%', transform:'translateY(-50%)', color:'var(--color-muted)'}} />
-          </div>
-          <div style={{position:'relative'}}>
-            <input
-              className="input"
-              value={category}
-              onChange={e=>setCategory(e.target.value)}
-              placeholder="类型"
-              style={{paddingLeft: 40}}
-            />
-            <List size={18} style={{position:'absolute', left: 14, top: '50%', transform:'translateY(-50%)', color:'var(--color-muted)'}} />
-          </div>
-          <div style={{position:'relative'}}>
-            <input
-              className="input"
-              value={tag}
-              onChange={e=>setTag(e.target.value)}
-              placeholder="日期"
-              style={{paddingLeft: 40}}
-            />
-            <Calendar size={18} style={{position:'absolute', left: 14, top: '50%', transform:'translateY(-50%)', color:'var(--color-muted)'}} />
-          </div>
-          <button className="btn btn-primary" onClick={()=>load({ q, category, tag })} style={{padding: '12px 20px'}}>
-            <Search size={18} />
-          </button>
-        </div>
-      </div>
 
-        {status === 'loading' ? (
+        {loading ? (
           <div style={{
             textAlign: 'center',
             padding: 'var(--spacing-2xl)',
@@ -183,11 +111,7 @@ export default function Home(){
               正在加载摄影作品...
             </div>
           </div>
-        ) : status === 'error' ? (
-          <div className="card" style={{maxWidth: 800, margin: '0 auto', textAlign: 'center', color: 'var(--color-secondary)'}}>
-            加载失败，请稍后重试
-          </div>
-        ) : status === 'empty' ? (
+        ) : items.length === 0 ? (
           <div style={{
             textAlign: 'center',
             padding: 'var(--spacing-2xl)',

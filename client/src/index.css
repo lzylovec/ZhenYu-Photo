@@ -185,73 +185,6 @@ body {
   align-items: center;
   gap: var(--spacing-md);
 }
-
-/* 导航栏搜索 */
-.nav-search {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.nav-search-inner {
-  position: relative;
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 8px;
-}
-.nav-search-input {
-  height: 40px;
-  padding: 10px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-card);
-  color: var(--color-text);
-  transition: var(--transition);
-}
-.nav-search-input:focus {
-  outline: none;
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(73,80,87,0.12);
-}
-.nav-search-btn, .nav-search-clear {
-  height: 40px;
-  width: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-card);
-  color: var(--color-text-light);
-  transition: var(--transition);
-}
-.nav-search-btn:hover, .nav-search-clear:hover {
-  box-shadow: var(--shadow-hover);
-}
-.nav-suggestions {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  right: 0;
-  background: #fff;
-  border: 1px solid var(--color-border);
-  border-radius: 12px;
-  box-shadow: var(--shadow-lg);
-  z-index: 20;
-  overflow: hidden;
-}
-.nav-suggestion-item {
-  padding: 10px 12px;
-  color: var(--color-text);
-  cursor: pointer;
-}
-.nav-suggestion-item:hover {
-  background: rgba(44,62,80,0.05);
-}
-@media (max-width: 768px) {
-  .nav-search-input { height: 36px; }
-  .nav-search-btn, .nav-search-clear { height: 36px; width: 36px; }
-}
 .nav-links a {
   color: var(--color-text-light);
   text-decoration: none;
@@ -629,4 +562,38 @@ body {
     --spacing-xl: 20px;
     --spacing-2xl: 24px;
   }
+}
+/* 导航栏搜索 */
+.nav-search {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 4px 15px;
+  box-shadow: var(--shadow);
+  width: min(180px, 50vw);
+}
+.nav-search .input {
+  border: none;
+  background: transparent;
+  padding: 6px 10px;
+  box-shadow: none;
+}
+@media (min-width: 640px) {
+  .nav-search { width: min(220px, 35vw); }
+}
+@media (min-width: 1024px) {
+  .nav-search { width: 240px; }
+}
+
+/* 搜索按钮圆角与搜索框一致 */
+.nav-search .btn,
+.nav-search .btn:hover,
+.nav-search .btn:focus,
+.nav-search .btn:active {
+  border-radius: 999px !important;
+  transition: var(--transition);
 }
