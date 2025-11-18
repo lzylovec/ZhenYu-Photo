@@ -1,0 +1,19 @@
+{
+  "name": "photo-gallery-client",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "vite"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.1",
+    "lucide-react": "^0.454.0",
+    "clsx": "^2.1.1"
+  },
+  "devDependencies": {
+    "vite": "^5.4.8"
+  }
+}
