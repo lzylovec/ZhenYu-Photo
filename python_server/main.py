@@ -432,7 +432,7 @@ def list_photos(q: str = None, tag: str = None, category: str = None, photograph
     return [normalize_row_urls(r) for r in rows]
 
 @app.get('/api/photos/{photo_id}')
-def photo_detail(photo_id: int):
+def photo_detail(photo_id: int, authorization: str = Header(None)):
     conn = get_conn()
     with conn.cursor() as cur:
         cur.execute('SELECT p.*, u.username as author FROM photos p LEFT JOIN users u ON u.id=p.user_id WHERE p.id=%s', (photo_id,))
@@ -448,12 +448,109 @@ def photo_detail(photo_id: int):
         favorites = cur.fetchone()['c']
         cur.execute('SELECT c.id, c.content, c.created_at, u.username FROM comments c JOIN users u ON u.id=c.user_id WHERE c.photo_id=%s ORDER BY c.id DESC', (photo_id,))
         comments = cur.fetchall()
+        liked_by_me = False
+        favorited_by_me = False
+        if authorization and authorization.startswith('Bearer '):
+            try:
+                payload = jwt.decode(authorization[7:], JWT_SECRET, algorithms=['HS256'])
+                uid = payload.get('id')
+                if uid:
+                    cur.execute('SELECT id FROM likes WHERE user_id=%s AND photo_id=%s', (uid, photo_id))
+                    liked_by_me = bool(cur.fetchone())
+                    cur.execute('SELECT id FROM favorites WHERE user_id=%s AND photo_id=%s', (uid, photo_id))
+                    favorited_by_me = bool(cur.fetchone())
+            except Exception:
+                pass
     conn.close()
     photo['tags'] = tags
     photo['likes'] = likes
     photo['favorites'] = favorites
     photo['comments'] = comments
+    photo['liked_by_me'] = liked_by_me
+    photo['favorited_by_me'] = favorited_by_me
     return normalize_row_urls(photo)
+
+@app.post('/api/photos/{photo_id}/like')
+def toggle_like(photo_id: int, request: Request, payload: dict = Depends(auth_required)):
+    require_csrf(request, payload)
+    conn = get_conn()
+    liked = False
+    with conn.cursor() as cur:
+        cur.execute('SELECT id FROM photos WHERE id=%s', (photo_id,))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail='作品不存在')
+        cur.execute('SELECT id FROM likes WHERE user_id=%s AND photo_id=%s', (payload['id'], photo_id))
+        row = cur.fetchone()
+        if row:
+            cur.execute('DELETE FROM likes WHERE id=%s', (row['id'],))
+            liked = False
+        else:
+            cur.execute('INSERT INTO likes (user_id, photo_id) VALUES (%s,%s)', (payload['id'], photo_id))
+            liked = True
+        cur.execute('SELECT COUNT(*) as c FROM likes WHERE photo_id=%s', (photo_id,))
+        cnt = cur.fetchone()['c']
+    conn.close()
+    return {'ok': True, 'liked': liked, 'likes': cnt}
+
+@app.post('/api/photos/{photo_id}/favorite')
+def toggle_favorite(photo_id: int, request: Request, payload: dict = Depends(auth_required)):
+    require_csrf(request, payload)
+    conn = get_conn()
+    favorited = False
+    with conn.cursor() as cur:
+        cur.execute('SELECT id FROM photos WHERE id=%s', (photo_id,))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail='作品不存在')
+        cur.execute('SELECT id FROM favorites WHERE user_id=%s AND photo_id=%s', (payload['id'], photo_id))
+        row = cur.fetchone()
+        if row:
+            cur.execute('DELETE FROM favorites WHERE id=%s', (row['id'],))
+            favorited = False
+        else:
+            cur.execute('INSERT INTO favorites (user_id, photo_id) VALUES (%s,%s)', (payload['id'], photo_id))
+            favorited = True
+        cur.execute('SELECT COUNT(*) as c FROM favorites WHERE photo_id=%s', (photo_id,))
+        cnt = cur.fetchone()['c']
+    conn.close()
+    return {'ok': True, 'favorited': favorited, 'favorites': cnt}
+
+@app.post('/api/photos/{photo_id}/comment')
+async def add_comment(photo_id: int, request: Request, payload: dict = Depends(auth_required)):
+    require_csrf(request, payload)
+    content = None
+    try:
+        form = await request.form()
+        v = form.get('content')
+        if isinstance(v, str):
+            content = v
+    except Exception:
+        pass
+    if not content:
+        try:
+            data = await request.json()
+            if isinstance(data, dict):
+                v = data.get('content')
+                if isinstance(v, str):
+                    content = v
+        except Exception:
+            pass
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(status_code=400, detail='评论内容不能为空')
+    content = content.strip()
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT id FROM photos WHERE id=%s', (photo_id,))
+        if not cur.fetchone():
+            conn.close()
+            raise HTTPException(status_code=404, detail='作品不存在')
+        cur.execute('INSERT INTO comments (user_id, photo_id, content) VALUES (%s,%s,%s)', (payload['id'], photo_id, content))
+        cid = cur.lastrowid
+        cur.execute('SELECT c.id, c.content, c.created_at, u.username FROM comments c JOIN users u ON u.id=c.user_id WHERE c.id=%s', (cid,))
+        cmt = cur.fetchone()
+    conn.close()
+    return {'ok': True, 'comment': cmt}
 
 @app.post('/api/photos')
 def upload_photos(request: Request, payload: dict = Depends(auth_required), files: List[UploadFile] = File(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
