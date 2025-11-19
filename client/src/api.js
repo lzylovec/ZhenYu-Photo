@@ -1,7 +1,17 @@
 import axios from 'axios'
 
+const fallbackBase = (() => {
+  const envBase = import.meta.env.VITE_API_BASE
+  if (envBase && typeof envBase === 'string' && envBase.trim()) return envBase
+  try {
+    const origin = window?.location?.origin
+    if (origin) return origin + '/api'
+  } catch {}
+  return 'http://localhost:4002/api'
+})()
+
 export const api = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE || 'http://localhost:4002/api',
+  baseURL: fallbackBase,
 })
 
 api.interceptors.request.use((config) => {

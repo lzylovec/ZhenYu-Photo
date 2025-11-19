@@ -46,6 +46,7 @@ def default_env():
         'ASSET_BASE_URL': 'http://localhost:4002',
         'HOST': '127.0.0.1',
         'PORT': '4002',
+        'ALLOWED_REFERRERS': 'http://localhost:5173, http://localhost:4002, https://*.ngrok-free.app, https://*.ngrok.io',
     }
     for k, v in env.items():
         if not os.getenv(k):

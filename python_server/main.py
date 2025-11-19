@@ -44,6 +44,8 @@ def normalize_row_urls(row: Dict):
         row['image_url'] = normalize_asset(row['image_url'])
     if 'thumb_url' in row and isinstance(row['thumb_url'], str):
         row['thumb_url'] = normalize_asset(row['thumb_url'])
+    if 'video_url' in row and isinstance(row['video_url'], str):
+        row['video_url'] = normalize_asset(row['video_url'])
     return row
 
 def _minio_client():
@@ -166,10 +168,10 @@ async def lifespan(app: FastAPI):
                 cur.execute("UPDATE home_carousel SET photo_id=%s WHERE id=%s", (pid, row['id']))
     conn.close()
     uploads_dir = os.path.join(os.path.dirname(__file__), '..', 'uploads')
-    for d in ['originals', 'processed', 'thumbs', 'carousel', 'carousel_thumbs']:
+    for d in ['originals', 'processed', 'thumbs', 'carousel', 'carousel_thumbs', 'videos']:
         p = os.path.join(uploads_dir, d)
         os.makedirs(p, exist_ok=True)
-    app.mount('/uploads', StaticFiles(directory=os.path.abspath(uploads_dir)), name='uploads')
+        app.mount('/uploads', StaticFiles(directory=os.path.abspath(uploads_dir)), name='uploads')
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -187,7 +189,30 @@ class UploadsSecurityMiddleware(BaseHTTPMiddleware):
             extra = os.getenv('ALLOWED_REFERRERS')
             if extra:
                 allowed.extend([s.strip() for s in extra.split(',') if s.strip()])
-            ok = (ref == '') or any(ref.startswith(a) for a in allowed)
+            ok = (ref == '')
+            if not ok and ref:
+                try:
+                    from urllib.parse import urlparse
+                    host = urlparse(ref).hostname or ''
+                except Exception:
+                    host = ''
+                for a in allowed:
+                    if ok:
+                        break
+                    a = a.strip()
+                    if not a:
+                        continue
+                    if a == '*':
+                        ok = True
+                        break
+                    if a.startswith('*.'):
+                        suf = a[2:]
+                        if host and host.endswith(suf):
+                            ok = True
+                            break
+                    if ref.startswith(a):
+                        ok = True
+                        break
             if not ok:
                 return JSONResponse({'error':'hotlink forbidden'}, status_code=403)
             resp = await call_next(request)
@@ -282,6 +307,36 @@ async def login(request: Request):
 @app.get('/api/csrf')
 def get_csrf(payload: dict = Depends(auth_required)):
     return {'token': csrf_for(payload['id'])}
+
+@app.post('/api/admin/set-asset-base')
+async def set_asset_base(request: Request, base: str = Form(...), allow_ref: str = Form('false'), payload: dict = Depends(auth_required)):
+    require_csrf(request, payload)
+    role_required(payload, 'admin', 'super_admin')
+    if not isinstance(base, str) or not base.strip():
+        raise HTTPException(status_code=400, detail='base必填')
+    base = base.strip().rstrip('/')
+    os.environ['ASSET_BASE_URL'] = base
+    if allow_ref.lower() in ('1','true','yes'): 
+        cur = os.environ.get('ALLOWED_REFERRERS','')
+        parts = [s.strip() for s in (cur.split(',') if cur else []) if s.strip()]
+        if base not in parts:
+            parts.append(base)
+        os.environ['ALLOWED_REFERRERS'] = ','.join(parts)
+    return {'ok': True, 'ASSET_BASE_URL': base, 'ALLOWED_REFERRERS': os.environ.get('ALLOWED_REFERRERS')}
+
+@app.post('/api/admin/add-allowed-referrer')
+async def add_allowed_referrer(request: Request, ref: str = Form(...), payload: dict = Depends(auth_required)):
+    require_csrf(request, payload)
+    role_required(payload, 'admin', 'super_admin')
+    if not isinstance(ref, str) or not ref.strip():
+        raise HTTPException(status_code=400, detail='ref必填')
+    ref = ref.strip()
+    cur = os.environ.get('ALLOWED_REFERRERS','')
+    parts = [s.strip() for s in (cur.split(',') if cur else []) if s.strip()]
+    if ref not in parts:
+        parts.append(ref)
+    os.environ['ALLOWED_REFERRERS'] = ','.join(parts)
+    return {'ok': True, 'ALLOWED_REFERRERS': os.environ.get('ALLOWED_REFERRERS')}
 
 @app.post('/api/auth/change-password')
 async def change_password(request: Request, payload: dict = Depends(auth_required)):
@@ -805,22 +860,12 @@ def admin_minio_delete(request: Request, payload: dict = Depends(auth_required),
 
 def _process_carousel_image(content: bytes):
     img = Image.open(io.BytesIO(content))
-    w, h = img.size
-    target_w, target_h = 2560, 1067
-    ratio = target_w / target_h
-    cur = w / h
-    if cur > ratio:
-        new_w = int(h * ratio)
-        x = (w - new_w) // 2
-        img = img.crop((x, 0, x + new_w, h))
-    else:
-        new_h = int(w / ratio)
-        y = (h - new_h) // 2
-        img = img.crop((0, y, w, y + new_h))
-    img = img.resize((target_w, target_h))
+    img = img.convert('RGB') if img.mode not in ('RGB', 'RGBA') else img
+    base = img.copy()
+    base.thumbnail((2560, 1600))
     th = img.copy()
     th.thumbnail((480, 480))
-    return img, th
+    return base, th
 
 @app.get('/api/carousel')
 def list_carousel():
@@ -1002,6 +1047,79 @@ def admin_replace_carousel(cid: int, request: Request, payload: dict = Depends(a
     except Exception:
         pass
     return {'ok': True, 'id': cid, 'image_url': image_url, 'thumb_url': thumb_url}
+
+@app.get('/api/home-videos')
+def list_home_videos():
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT id, video_url, title, sort_order FROM home_videos ORDER BY sort_order ASC, id ASC')
+        rows = cur.fetchall()
+    conn.close()
+    return [normalize_row_urls(r) for r in rows]
+
+@app.get('/api/admin/home-videos')
+def admin_list_home_videos(payload: dict = Depends(auth_required)):
+    role_required(payload, 'super_admin')
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT id, video_url, title, sort_order FROM home_videos ORDER BY sort_order ASC, id ASC')
+        rows = cur.fetchall()
+    conn.close()
+    return [normalize_row_urls(r) for r in rows]
+
+@app.post('/api/admin/home-videos')
+def admin_add_home_video(request: Request, payload: dict = Depends(auth_required), file: UploadFile = File(...), title: str = Form(None)):
+    role_required(payload, 'super_admin')
+    require_csrf(request, payload)
+    if not (file.content_type or '').startswith('video/'):
+        raise HTTPException(status_code=400, detail='仅支持视频文件')
+    base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
+    ext = os.path.splitext(file.filename or '')[1].lower() or '.mp4'
+    content = file.file.read()
+    uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
+    videos_dir = os.path.join(uploads_root, 'videos')
+    ok = _minio_put_bytes(f"videos/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
+    video_url = _minio_url(f"videos/{base}{ext}") if ok else None
+    if not video_url:
+        path = os.path.join(videos_dir, base + ext)
+        with open(path, 'wb') as out:
+            out.write(content)
+        video_url = asset_url(f"uploads/videos/{os.path.basename(path)}")
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT COALESCE(MAX(sort_order),0) as m FROM home_videos')
+        m = cur.fetchone()['m']
+        cur.execute('INSERT INTO home_videos (video_url, title, user_id, sort_order) VALUES (%s,%s,%s,%s)', (video_url, title, payload['id'], m + 1))
+        vid = cur.lastrowid
+    conn.close()
+    return {'ok': True, 'id': vid, 'video_url': video_url}
+
+@app.delete('/api/admin/home-videos/{vid}')
+def admin_delete_home_video(vid: int, request: Request, payload: dict = Depends(auth_required)):
+    role_required(payload, 'super_admin')
+    require_csrf(request, payload)
+    uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
+    videos_dir = os.path.join(uploads_root, 'videos')
+    conn = get_conn()
+    with conn.cursor() as cur:
+        cur.execute('SELECT video_url FROM home_videos WHERE id=%s', (vid,))
+        row = cur.fetchone()
+        if not row:
+            conn.close()
+            raise HTTPException(status_code=404, detail='视频不存在')
+        u = row['video_url']
+        k = _minio_key_from_url(u)
+        if k:
+            _minio_remove(k)
+        p = os.path.join(videos_dir, os.path.basename(u or ''))
+        cur.execute('DELETE FROM home_videos WHERE id=%s', (vid,))
+    conn.close()
+    try:
+        if p and os.path.exists(p):
+            os.remove(p)
+    except Exception:
+        pass
+    return {'ok': True}
 
 @app.put('/api/photos/{photo_id}')
 async def update_photo(photo_id: int, request: Request, payload: dict = Depends(auth_required)):

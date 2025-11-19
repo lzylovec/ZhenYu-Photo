@@ -127,6 +127,22 @@ def init_schema():
         except Exception:
             pass
         cur.execute("""
+        CREATE TABLE IF NOT EXISTS home_videos (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          video_url VARCHAR(1024) NOT NULL,
+          title VARCHAR(255),
+          user_id INT,
+          sort_order INT NOT NULL DEFAULT 0,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB
+        """)
+        try:
+            cur.execute("SHOW COLUMNS FROM home_videos LIKE 'user_id'")
+            if not cur.fetchall():
+                cur.execute("ALTER TABLE home_videos ADD COLUMN user_id INT")
+        except Exception:
+            pass
+        cur.execute("""
         CREATE TABLE IF NOT EXISTS photo_edits (
           id INT AUTO_INCREMENT PRIMARY KEY,
           photo_id INT NOT NULL,

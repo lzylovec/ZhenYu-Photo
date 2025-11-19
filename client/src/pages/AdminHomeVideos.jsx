@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 
-export default function AdminCarousel(){
+export default function AdminHomeVideos(){
   const fileRef = useRef(null)
   const [items, setItems] = useState([])
   const [previews, setPreviews] = useState([])
@@ -10,8 +10,8 @@ export default function AdminCarousel(){
 
   async function load(){
     try {
-      const { data } = await api.get('/admin/carousel')
-      setItems(data)
+      const { data } = await api.get('/admin/home-videos')
+      setItems(Array.isArray(data) ? data : [])
     } catch (e) {
       setItems([])
     }
@@ -19,7 +19,7 @@ export default function AdminCarousel(){
   useEffect(()=>{ load() },[])
 
   function onFilesChange(files){
-    const arr = Array.from(files || []).slice(0, 9 - items.length)
+    const arr = Array.from(files || [])
     setError('')
     setPreviews(arr.map(f => ({ name: f.name, url: URL.createObjectURL(f), file: f })))
   }
@@ -29,13 +29,15 @@ export default function AdminCarousel(){
     setProgress(0)
     for (let i = 0; i < previews.length; i++){
       const f = previews[i].file
+      const name = previews[i].name
       await new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest()
-        xhr.open('POST', (api.defaults.baseURL || '') + '/admin/carousel')
+        xhr.open('POST', (api.defaults.baseURL || '') + '/admin/home-videos')
         const token = localStorage.getItem('token')
         if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
         const fd = new FormData()
         fd.append('file', f)
+        fd.append('title', name)
         xhr.upload.onprogress = (evt) => {
           if (evt.lengthComputable) setProgress(Math.round((evt.loaded / evt.total) * 100))
         }
@@ -44,7 +46,8 @@ export default function AdminCarousel(){
             if (xhr.status >= 200 && xhr.status < 300) {
               resolve()
             } else {
-              reject(new Error(xhr.responseText || '上传失败'))
+              const res = (()=>{ try { return JSON.parse(xhr.responseText) } catch { return {} } })()
+              reject(new Error(res.detail || '上传失败'))
             }
           }
         }
@@ -58,44 +61,20 @@ export default function AdminCarousel(){
     await load()
   }
 
-  function move(idx, dir){
-    const newItems = items.slice()
-    const swap = idx + dir
-    if (swap < 0 || swap >= newItems.length) return
-    const t = newItems[idx]
-    newItems[idx] = newItems[swap]
-    newItems[swap] = t
-    setItems(newItems)
-  }
-
-  async function saveOrder(){
-    const ids = items.map(it => it.id)
-    await api.put('/admin/carousel/sort', { ids })
-    await load()
-  }
-
   async function remove(id){
-    await api.delete(`/admin/carousel/${id}`)
-    await load()
-  }
-
-  async function replace(id, file){
-    const fd = new FormData()
-    fd.append('file', file)
-    const token = localStorage.getItem('token')
-    const csrf = localStorage.getItem('csrf')
-    await fetch((api.defaults.baseURL || '') + `/admin/carousel/${id}`, {
-      method: 'PUT',
-      headers: token ? { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrf || '' } : { 'X-CSRF-Token': csrf || '' },
-      body: fd
-    })
-    await load()
+    if (!window.confirm('确定要删除该视频吗？此操作不可恢复')) return
+    try {
+      await api.delete(`/admin/home-videos/${id}`)
+      await load()
+    } catch(e){
+      setError(e.response?.data?.detail || e.response?.data?.error || e.message || '删除失败')
+    }
   }
 
   if (!localStorage.getItem('token')){
     return (
       <div className="fade-in" style={{padding: 'var(--spacing-xl)', textAlign: 'center'}}>
-        仅管理员可访问
+        仅超级管理员可访问
       </div>
     )
   }
@@ -103,10 +82,10 @@ export default function AdminCarousel(){
   return (
     <div className="fade-in" style={{padding: 'var(--spacing-xl)'}}>
       <div className="card" style={{maxWidth: 1000, margin: '0 auto var(--spacing-xl)'}}>
-        <div style={{fontSize: '24px', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--spacing-md)'}}>首页轮播图管理</div>
-        <div style={{color: 'var(--color-text-light)', marginBottom: 'var(--spacing-md)'}}>最多上传9张，保留原始比例；长边≤2560（自动缩放，不裁切）</div>
-        <input type="file" ref={fileRef} multiple accept="image/*" style={{display: 'none'}} onChange={e=>onFilesChange(e.target.files)} />
-        <button className="btn btn-primary" onClick={()=>fileRef.current?.click()} style={{marginRight: 'var(--spacing-md)'}}>选择图片</button>
+        <div style={{fontSize: '24px', fontWeight: 'var(--font-weight-bold)', marginBottom: 'var(--spacing-md)'}}>首页视频管理</div>
+        <div style={{color: 'var(--color-text-light)', marginBottom: 'var(--spacing-md)'}}>支持 MP4 等常见格式；建议 1080p，时长适中</div>
+        <input type="file" ref={fileRef} multiple accept="video/*" style={{display: 'none'}} onChange={e=>onFilesChange(e.target.files)} />
+        <button className="btn btn-primary" onClick={()=>fileRef.current?.click()} style={{marginRight: 'var(--spacing-md)'}}>选择视频</button>
         <button className="btn" onClick={uploadAll} disabled={!previews.length}>开始上传</button>
         {error && <div style={{color:'var(--color-secondary)', marginTop:'var(--spacing-md)'}}>{error}</div>}
         <div style={{marginTop:'var(--spacing-md)'}}>
@@ -117,11 +96,12 @@ export default function AdminCarousel(){
         </div>
         {!!previews.length && (
           <div style={{marginTop: 'var(--spacing-lg)'}}>
-            <div style={{fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--spacing-sm)'}}>待上传预览（{previews.length}）</div>
+            <div style={{fontWeight: 'var(--font-weight-medium)', marginBottom: 'var(--spacing-sm)'}}>待上传（{previews.length}）</div>
             <div style={{display: 'flex', gap: 'var(--spacing-md)', flexWrap: 'wrap'}}>
               {previews.map((p, i) => (
-                <div key={i} className="card" style={{padding: 'var(--spacing-sm)'}}>
-                  <img src={p.url} alt={p.name} style={{height: 120, display:'block'}} />
+                <div key={i} className="card" style={{padding: 'var(--spacing-sm)', width: 240}}>
+                  <video src={p.url} style={{width: '100%', display:'block'}} muted controls />
+                  <div style={{fontSize: 12, color:'var(--color-text-light)', marginTop: 8}}>{p.name}</div>
                 </div>
               ))}
             </div>
@@ -132,24 +112,14 @@ export default function AdminCarousel(){
       <div className="card" style={{maxWidth: 1000, margin: '0 auto'}}>
         <div style={{display: 'flex', justifyContent:'space-between', alignItems:'center', marginBottom: 'var(--spacing-md)'}}>
           <div style={{fontWeight: 'var(--font-weight-semibold)'}}>已上传（{items.length}）</div>
-          <button className="btn btn-primary" onClick={saveOrder}>保存排序</button>
         </div>
-        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 'var(--spacing-md)'}}>
-          {items.map((it, i) => (
+        <div style={{display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 'var(--spacing-md)'}}>
+          {items.map((it) => (
             <div key={it.id} className="card" style={{position:'relative'}}>
-              <img src={it.thumb_url || it.image_url} alt={it.id} style={{width:'100%', display:'block'}} />
+              <video src={it.video_url} style={{width:'100%', display:'block'}} controls muted />
               <div style={{display:'flex', justifyContent:'space-between', gap:'var(--spacing-sm)', marginTop:'var(--spacing-sm)'}}>
-                <div style={{display:'flex', gap:'var(--spacing-sm)'}}>
-                  <button className="btn" onClick={()=>move(i, -1)}>上移</button>
-                  <button className="btn" onClick={()=>move(i, 1)}>下移</button>
-                </div>
-                <div style={{display:'flex', gap:'var(--spacing-sm)'}}>
-                  <label className="btn">
-                    替换
-                    <input type="file" accept="image/*" style={{display:'none'}} onChange={e=>e.target.files?.[0] && replace(it.id, e.target.files[0])} />
-                  </label>
-                  <button className="btn" onClick={()=>remove(it.id)} style={{color:'var(--color-secondary)'}}>删除</button>
-                </div>
+                <div style={{color:'var(--color-text-light)'}}>{it.title || '首页视频'}</div>
+                <button className="btn" onClick={()=>remove(it.id)} style={{color:'var(--color-secondary)'}}>删除</button>
               </div>
             </div>
           ))}

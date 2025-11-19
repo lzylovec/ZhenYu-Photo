@@ -7,11 +7,13 @@ import Upload from './pages/Upload'
 import Login from './pages/Login'
 import Profile from './pages/Profile'
 import AdminCarousel from './pages/AdminCarousel'
+import AdminHomeVideos from './pages/AdminHomeVideos'
 
 function Nav() {
   const navigate = useNavigate()
   const location = useLocation()
   const token = localStorage.getItem('token')
+  const [meRole, setMeRole] = React.useState(null)
   const [compact, setCompact] = React.useState(false)
   const [hidden, setHidden] = React.useState(false)
   const [mounted, setMounted] = React.useState(false)
@@ -24,6 +26,16 @@ function Nav() {
     const qs = new URLSearchParams(location.search)
     setNavQuery(qs.get('q') || '')
   }, [location.search])
+  React.useEffect(()=>{
+    async function fetchMe(){
+      if (!localStorage.getItem('token')) { setMeRole(null); return }
+      try {
+        const { data } = await (await import('./api')).api.get('/users/me')
+        setMeRole(data?.role || null)
+      } catch { setMeRole(null) }
+    }
+    fetchMe()
+  }, [token])
   function logout() {
     localStorage.removeItem('token')
     navigate('/')
@@ -62,8 +74,9 @@ function Nav() {
     const detail = { compact, hidden }
     document.dispatchEvent(new CustomEvent('nav-transition-end', { detail }))
   }
+  const isHome = location.pathname === '/'
   return (
-    <nav ref={navRef} onTransitionEnd={onTransitionEnd} className={`nav ${mounted ? 'nav--ready' : 'nav--boot'} ${compact ? 'nav--compact' : ''} ${hidden ? 'nav--hidden' : ''}`}>
+    <nav ref={navRef} onTransitionEnd={onTransitionEnd} className={`nav ${mounted ? 'nav--ready' : 'nav--boot'} ${compact ? 'nav--compact' : ''} ${hidden ? 'nav--hidden' : ''} ${isHome && !compact ? 'nav--transparent' : ''}`}>
       <Link to="/" className="nav-brand">
         <Camera size={28} style={{ marginRight: 'var(--spacing-sm)' }} />
         <span style={{ fontWeight: 'var(--font-weight-bold)' }}>彩虹影展</span>
@@ -89,6 +102,12 @@ function Nav() {
             <span>首页轮播图</span>
           </Link>
         )}
+        {token && meRole === 'super_admin' && (
+          <Link to="/admin-home-videos" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+            <IconUpload size={18} />
+            <span>首页视频</span>
+          </Link>
+        )}
         {token && (
           <Link to="/upload" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
             <IconUpload size={18} />
@@ -108,7 +127,7 @@ function Nav() {
             </span>
           </Link>
         ) : (
-          <button className="btn" onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+          <button className="nav-action" onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
             <LogOut size={18} />
             <span>退出</span>
           </button>
@@ -142,6 +161,7 @@ export default function App() {
         <Route path="/photos/:id" element={<Detail />} />
         <Route path="/upload" element={<Upload />} />
         <Route path="/admin-carousel" element={<AdminCarousel />} />
+        <Route path="/admin-home-videos" element={<AdminHomeVideos />} />
         <Route path="/admin-login" element={<Login />} />
         <Route path="/admin" element={<Navigate to="/" replace />} />
         <Route path="/login" element={<Navigate to="/" replace />} />
