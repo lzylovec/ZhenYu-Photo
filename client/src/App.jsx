@@ -77,7 +77,7 @@ function Nav() {
   const isHome = location.pathname === '/'
   return (
     <nav ref={navRef} onTransitionEnd={onTransitionEnd} className={`nav ${mounted ? 'nav--ready' : 'nav--boot'} ${compact ? 'nav--compact' : ''} ${hidden ? 'nav--hidden' : ''} ${isHome && !compact ? 'nav--transparent' : ''}`}>
-      <Link to="/" className="nav-brand">
+      <Link to="/" className="nav-brand" onClick={(e)=>{ try { sessionStorage.removeItem('homeScrollRestore'); sessionStorage.removeItem('homeScrollValid'); sessionStorage.removeItem('homeScrollY'); sessionStorage.removeItem('homeLastId') } catch {} ; if (location.pathname === '/') { e.preventDefault(); try { sessionStorage.removeItem('homeScrollHardTop') } catch {}; window.scrollTo({ top: 0, left: 0, behavior: 'smooth' }) } else { try { sessionStorage.setItem('homeScrollHardTop','1') } catch {} } }}>
         <Camera size={28} style={{ marginRight: 'var(--spacing-sm)' }} />
         <span style={{ fontWeight: 'var(--font-weight-bold)' }}>彩虹影展</span>
       </Link>
@@ -121,7 +121,7 @@ function Nav() {
           </Link>
         )}
         {!token ? (
-          <Link to="/admin-login" style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-xs)' }}>
+          <Link to="/admin-login" className="nav-action nav-avatar-link" aria-label="管理员登录">
             <span className="nav-avatar-box">
               <img src="/ui/photoer.png" alt="管理员头像" className="nav-avatar-img" />
             </span>

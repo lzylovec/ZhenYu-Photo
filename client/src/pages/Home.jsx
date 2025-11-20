@@ -104,6 +104,46 @@ export default function Home() {
   }
 
   useEffect(() => { if (!loading) autoFill() }, [loading, items])
+  useEffect(() => {
+    if (!loading) {
+      try {
+        const flag = sessionStorage.getItem('homeScrollRestore') === '1'
+        const valid = sessionStorage.getItem('homeScrollValid') === '1'
+        if (flag && valid) {
+          const id = sessionStorage.getItem('homeLastId')
+          const y = parseFloat(sessionStorage.getItem('homeScrollY') || '0')
+          let tries = 0
+          function attempt() {
+            const el = id ? document.getElementById('photo-card-' + id) : null
+            const nav = document.querySelector('.nav')
+            const navH = nav ? nav.getBoundingClientRect().height : 0
+            if (el) {
+              const rectTop = el.getBoundingClientRect().top + (window.scrollY || 0)
+              window.scrollTo({ top: Math.max(rectTop - navH - 8, 0), left: 0, behavior: 'auto' })
+              sessionStorage.removeItem('homeScrollRestore'); sessionStorage.removeItem('homeScrollValid'); sessionStorage.removeItem('homeScrollY'); sessionStorage.removeItem('homeLastId')
+            } else if (tries < 20) {
+              tries++; setTimeout(attempt, 50)
+            } else {
+              window.scrollTo({ top: y, left: 0, behavior: 'auto' })
+              sessionStorage.removeItem('homeScrollRestore'); sessionStorage.removeItem('homeScrollValid'); sessionStorage.removeItem('homeScrollY'); sessionStorage.removeItem('homeLastId')
+            }
+          }
+          setTimeout(attempt, 0)
+        }
+      } catch {}
+    }
+  }, [loading, items.length])
+
+  useEffect(() => {
+    if (!loading) {
+      try {
+        if (sessionStorage.getItem('homeScrollHardTop') === '1') {
+          window.scrollTo({ top: 0, left: 0, behavior: 'smooth' })
+          sessionStorage.removeItem('homeScrollHardTop')
+        }
+      } catch {}
+    }
+  }, [loading])
 
   useEffect(() => { if (fillLogs.length) console.warn('masonry-fill-log', fillLogs[fillLogs.length - 1]) }, [fillLogs])
 
@@ -257,8 +297,10 @@ export default function Home() {
           {items.map((it) => (
             <MasonryItem key={it.id}>
               <Link
+                id={`photo-card-${it.id}`}
                 to={`/photos/${it.id}`}
                 className="card"
+                onClick={() => { try { sessionStorage.setItem('homeScrollY', String(window.scrollY || 0)); sessionStorage.setItem('homeScrollValid','1'); sessionStorage.setItem('homeLastId', String(it.id)) } catch {} }}
               >
                 <div className="photo-card">
                   <img

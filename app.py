@@ -44,9 +44,9 @@ def default_env():
         'ADMIN_USERNAME': 'admin',
         'ADMIN_PASSWORD': 'admin123',
         'ASSET_BASE_URL': 'http://localhost:4002',
-        'HOST': '127.0.0.1',
+        'HOST': '0.0.0.0',
         'PORT': '4002',
-        'ALLOWED_REFERRERS': 'http://localhost:5173, http://localhost:4002, https://*.ngrok-free.app, https://*.ngrok.io',
+        'ALLOWED_REFERRERS': 'http://localhost:5173, http://localhost:4002, http://192.168., http://10., http://172., https://*.ngrok-free.app, https://*.ngrok-free.dev, https://*.ngrok.io',
     }
     for k, v in env.items():
         if not os.getenv(k):

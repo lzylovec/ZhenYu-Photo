@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Heart, Bookmark, Send, Camera, Settings } from 'lucide-react'
+import { Heart, Bookmark, Send, Camera, Settings, ArrowLeft } from 'lucide-react'
 import { api } from '../api'
 
 export default function Detail(){
@@ -9,6 +9,10 @@ export default function Detail(){
   const [data, setData] = useState(null)
   const [comment, setComment] = useState('')
   const [scale, setScale] = useState(1)
+  function goBack(){
+    try { sessionStorage.setItem('homeScrollRestore','1') } catch {}
+    navigate(-1)
+  }
 
   async function load(){
     const { data } = await api.get(`/photos/${id}`)
@@ -63,6 +67,16 @@ export default function Detail(){
         </div>
       </div>
       <div className="detail-right">
+        <div className="action-toolbar">
+          <button
+            className="btn"
+            onClick={goBack}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', minWidth: '96px' }}
+          >
+            <ArrowLeft size={16} />
+            <span>返回</span>
+          </button>
+        </div>
         <div className="card" style={{marginBottom: 'var(--spacing-xl)', display: 'flex', flexDirection: 'column', minHeight: 'clamp(220px, 28vh, 360px)'}}>
           <div style={{
             display: 'flex',
