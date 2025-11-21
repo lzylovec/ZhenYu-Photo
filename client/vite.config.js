@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    allowedHosts: [
+      'unreticent-emanuel-involucrate.ngrok-free.dev'
+    ],
     proxy: {
       '/api': {
         target: 'http://localhost:4002',
@@ -13,7 +16,7 @@ export default defineConfig({
       '/uploads': {
         target: 'http://localhost:4002',
         changeOrigin: true,
-      },
-    },
-  },
+      }
+    }
+  }
 })
