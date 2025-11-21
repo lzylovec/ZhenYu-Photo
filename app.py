@@ -47,6 +47,8 @@ def default_env():
         'HOST': '0.0.0.0',
         'PORT': '4002',
         'ALLOWED_REFERRERS': 'http://localhost:5173, http://localhost:4002, http://192.168., http://10., http://172., https://*.ngrok-free.app, https://*.ngrok-free.dev, https://*.ngrok.io',
+        'R2_SECURE': 'true',
+        'R2_BUCKET': 'photos',
     }
     for k, v in env.items():
         if not os.getenv(k):
@@ -55,6 +57,27 @@ def default_env():
 def main():
     root = os.path.abspath(os.path.dirname(__file__))
     os.chdir(root)
+    def load_env_file():
+        for name in ('.env.local', '.env'):
+            path = os.path.join(root, name)
+            if os.path.exists(path):
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            s = line.strip()
+                            if not s or s.startswith('#'):
+                                continue
+                            if '=' not in s:
+                                continue
+                            k, v = s.split('=', 1)
+                            k = k.strip()
+                            v = v.strip().strip('"').strip("'")
+                            if not os.getenv(k):
+                                os.environ[k] = v
+                except Exception:
+                    pass
+                break
+    load_env_file()
     default_env()
     print('Python解释器:', sys.executable)
     print('工作目录:', root)

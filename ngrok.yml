@@ -1,8 +1,0 @@
-version: 2
-tunnels:
-  web:
-    proto: http
-    addr: 5173
-  api:
-    proto: http
-    addr: 4002

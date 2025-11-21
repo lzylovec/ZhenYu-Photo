@@ -48,62 +48,84 @@ def normalize_row_urls(row: Dict):
         row['video_url'] = normalize_asset(row['video_url'])
     return row
 
-def _minio_client():
-    endpoint = os.getenv('MINIO_ENDPOINT')
-    access_key = os.getenv('MINIO_ACCESS_KEY')
-    secret_key = os.getenv('MINIO_SECRET_KEY')
-    secure = os.getenv('MINIO_SECURE', 'false').lower() in ('1','true','yes')
-    bucket = os.getenv('MINIO_BUCKET', 'photos')
+def _r2_client():
+    endpoint = os.getenv('R2_ENDPOINT')
+    access_key = os.getenv('R2_ACCESS_KEY')
+    secret_key = os.getenv('R2_SECRET_KEY')
+    secure = os.getenv('R2_SECURE', 'true').lower() in ('1','true','yes')
+    bucket = os.getenv('R2_BUCKET') or 'photos'
     if not (endpoint and access_key and secret_key):
         return None, None
     try:
-        connect_timeout = float(os.getenv('MINIO_CONNECT_TIMEOUT', '2'))
-        read_timeout = float(os.getenv('MINIO_READ_TIMEOUT', '10'))
-        total_retries = int(os.getenv('MINIO_RETRY', '1'))
+        connect_timeout = float(os.getenv('R2_CONNECT_TIMEOUT', '2'))
+        read_timeout = float(os.getenv('R2_READ_TIMEOUT', '10'))
+        total_retries = int(os.getenv('R2_RETRY', '1'))
+        region = os.getenv('R2_REGION')
+        from urllib.parse import urlparse
+        parsed = urlparse(endpoint if endpoint.startswith('http') else ('https://' + endpoint))
+        host = parsed.netloc or endpoint.replace('http://','').replace('https://','')
+        path_bucket = (parsed.path or '').strip('/').split('/')
+        if path_bucket and path_bucket[0] and not os.getenv('R2_BUCKET'):
+            bucket = path_bucket[0]
+        if not region and (host or '').find('.r2.cloudflarestorage.com') != -1:
+            region = 'auto'
+        import ssl
+        skip_verify = os.getenv('R2_SKIP_VERIFY', 'false').lower() in ('1','true','yes')
+        ssl_ctx = None
+        if skip_verify:
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
         http_client = urllib3.PoolManager(
             timeout=Timeout(connect=connect_timeout, read=read_timeout),
-            retries=Retry(total=total_retries, backoff_factor=0.2, status_forcelist=[500,502,503,504])
+            retries=Retry(total=total_retries, backoff_factor=0.2, status_forcelist=[500,502,503,504]),
+            ssl_context=ssl_ctx
         )
         client = Minio(
-            endpoint.replace('http://','').replace('https://',''),
+            host,
             access_key=access_key,
             secret_key=secret_key,
             secure=secure,
+            region=region,
             http_client=http_client,
         )
-        found = client.bucket_exists(bucket)
-        if not found:
-            client.make_bucket(bucket)
         return client, bucket
     except Exception:
         return None, None
 
-def _minio_public_base():
-    base = os.getenv('MINIO_PUBLIC_BASE')
+def _r2_public_base():
+    base = os.getenv('R2_PUBLIC_BASE')
     if base:
         return base.rstrip('/')
-    endpoint = os.getenv('MINIO_ENDPOINT')
+    endpoint = os.getenv('R2_ENDPOINT')
     if not endpoint:
         return None
-    secure = os.getenv('MINIO_SECURE', 'false').lower() in ('1','true','yes')
+    secure = os.getenv('R2_SECURE', 'true').lower() in ('1','true','yes')
     proto = 'https' if secure else 'http'
-    host = endpoint.replace('http://','').replace('https://','')
+    from urllib.parse import urlparse
+    parsed = urlparse(endpoint if endpoint.startswith('http') else ('https://' + endpoint))
+    host = parsed.netloc or endpoint.replace('http://','').replace('https://','')
     return f"{proto}://{host}"
 
-def _minio_url(object_name: str):
-    client, bucket = _minio_client()
+def _r2_url(object_name: str):
+    client, bucket = _r2_client()
     if not client:
         return None
-    base = _minio_public_base()
+    base = _r2_public_base()
     if base:
-        return f"{base}/{bucket}/{object_name.lstrip('/')}"
+        name = os.getenv('R2_PUBLIC_NAME') or bucket
+        include_bucket = os.getenv('R2_PUBLIC_PATH_HAS_BUCKET', 'true').lower() in ('1','true','yes')
+        if include_bucket:
+            return f"{base}/{name}/{object_name.lstrip('/')}"
+        else:
+            return f"{base}/{object_name.lstrip('/')}"
     try:
         return client.presigned_get_object(bucket, object_name, expires=timedelta(days=7))
     except Exception:
         return None
 
-def _minio_put_bytes(object_name: str, data: bytes, content_type: str = 'application/octet-stream'):
-    client, bucket = _minio_client()
+def _r2_put_bytes(object_name: str, data: bytes, content_type: str = 'application/octet-stream'):
+    client, bucket = _r2_client()
     if not client:
         return False
     try:
@@ -113,8 +135,8 @@ def _minio_put_bytes(object_name: str, data: bytes, content_type: str = 'applica
     except Exception:
         return False
 
-def _minio_remove(object_name: str):
-    client, bucket = _minio_client()
+def _r2_remove(object_name: str):
+    client, bucket = _r2_client()
     if not client:
         return False
     try:
@@ -123,18 +145,24 @@ def _minio_remove(object_name: str):
     except Exception:
         return False
 
-def _minio_key_from_url(url: str):
+def _r2_key_from_url(url: str):
     try:
-        base = _minio_public_base()
-        bucket = os.getenv('MINIO_BUCKET', 'photos')
-        if base and url and url.startswith(f"{base}/{bucket}/"):
-            return url.split(f"{base}/{bucket}/", 1)[1]
-        return None
+        base = _r2_public_base()
+        if not (base and url and url.startswith(base.rstrip('/') + '/')):
+            return None
+        rest = url.split(base.rstrip('/') + '/', 1)[1]
+        name = os.getenv('R2_PUBLIC_NAME') or os.getenv('R2_BUCKET', 'photos')
+        include_bucket = os.getenv('R2_PUBLIC_PATH_HAS_BUCKET', 'true').lower() in ('1','true','yes')
+        if include_bucket:
+            if rest.startswith(name + '/'):
+                return rest.split(name + '/', 1)[1]
+            return None
+        return rest
     except Exception:
         return None
 
-def _minio_get_bytes(object_name: str):
-    client, bucket = _minio_client()
+def _r2_get_bytes(object_name: str):
+    client, bucket = _r2_client()
     if not client:
         return None
     try:
@@ -337,6 +365,78 @@ async def add_allowed_referrer(request: Request, ref: str = Form(...), payload: 
         parts.append(ref)
     os.environ['ALLOWED_REFERRERS'] = ','.join(parts)
     return {'ok': True, 'ALLOWED_REFERRERS': os.environ.get('ALLOWED_REFERRERS')}
+
+@app.get('/api/admin/r2-config')
+def get_r2_config(payload: dict = Depends(auth_required)):
+    role_required(payload, 'admin', 'super_admin')
+    return {
+        'endpoint': os.getenv('R2_ENDPOINT'),
+        'bucket': os.getenv('R2_BUCKET'),
+        'secure': os.getenv('R2_SECURE'),
+        'public_base': os.getenv('R2_PUBLIC_BASE'),
+        'region': os.getenv('R2_REGION'),
+    }
+
+@app.post('/api/admin/r2-config')
+async def set_r2_config(
+    request: Request,
+    payload: dict = Depends(auth_required),
+    endpoint: str = Form(...),
+    access_key: str = Form(...),
+    secret_key: str = Form(...),
+    bucket: str = Form(None),
+    secure: str = Form('true'),
+    public_base: str = Form(None),
+    region: str = Form(None),
+    skip_verify: str = Form('false'),
+    public_name: str = Form(None),
+    public_path_has_bucket: str = Form('true'),
+):
+    require_csrf(request, payload)
+    role_required(payload, 'admin', 'super_admin')
+    ep = endpoint.strip() if isinstance(endpoint, str) else ''
+    ak = access_key.strip() if isinstance(access_key, str) else ''
+    sk = secret_key.strip() if isinstance(secret_key, str) else ''
+    if not (ep and ak and sk):
+        raise HTTPException(status_code=400, detail='endpoint/access_key/secret_key 必填')
+    b = bucket.strip() if isinstance(bucket, str) and bucket.strip() else None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(ep if ep.startswith('http') else ('https://' + ep))
+        pb = (parsed.path or '').strip('/').split('/')
+        if not b and pb and pb[0]:
+            b = pb[0]
+    except Exception:
+        pass
+    os.environ['R2_ENDPOINT'] = ep
+    os.environ['R2_ACCESS_KEY'] = ak
+    os.environ['R2_SECRET_KEY'] = sk
+    if b:
+        os.environ['R2_BUCKET'] = b
+    os.environ['R2_SECURE'] = 'true' if str(secure).lower() in ('1','true','yes') else 'false'
+    if isinstance(public_base, str) and public_base.strip():
+        os.environ['R2_PUBLIC_BASE'] = public_base.strip().rstrip('/')
+    if isinstance(public_name, str) and public_name.strip():
+        os.environ['R2_PUBLIC_NAME'] = public_name.strip()
+    os.environ['R2_PUBLIC_PATH_HAS_BUCKET'] = 'true' if str(public_path_has_bucket).lower() in ('1','true','yes') else 'false'
+    if isinstance(region, str) and region.strip():
+        os.environ['R2_REGION'] = region.strip()
+    os.environ['R2_SKIP_VERIFY'] = 'true' if str(skip_verify).lower() in ('1','true','yes') else 'false'
+    client, b2 = _r2_client()
+    if not client:
+        raise HTTPException(status_code=400, detail='R2配置无效')
+    bucket_exists = None
+    try:
+        bucket_exists = bool(client.bucket_exists(b2))
+        if not bucket_exists:
+            try:
+                client.make_bucket(b2)
+                bucket_exists = True
+            except Exception:
+                bucket_exists = False
+    except Exception:
+        bucket_exists = False
+    return {'ok': True, 'bucket': b2, 'public_base': os.getenv('R2_PUBLIC_BASE'), 'bucket_exists': bucket_exists}
 
 @app.post('/api/auth/change-password')
 async def change_password(request: Request, payload: dict = Depends(auth_required)):
@@ -647,29 +747,32 @@ def upload_photos(request: Request, payload: dict = Depends(auth_required), file
             image_url = None
             thumb_url = None
             original_url = None
+            orig_key = f"originals/{base}{ext}"
+            ok_orig = _r2_put_bytes(orig_key, content, content_type=uf.content_type or 'application/octet-stream')
+            if ok_orig:
+                original_url = _r2_url(orig_key)
             try:
                 img = Image.open(io.BytesIO(content))
-                img_copy = img.copy()
-                img_copy.thumbnail((2000, 2000))
-                buf_proc = io.BytesIO()
-                img_copy.save(buf_proc, format='WEBP', quality=80)
+                img_copy = img.copy(); img_copy.thumbnail((2000, 2000))
+                buf_proc = io.BytesIO(); img_copy.save(buf_proc, format='WEBP', quality=80)
                 proc_key = f"processed/{base}.webp"
-                ok_proc = _minio_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
-                th = img.copy()
-                th.thumbnail((480, 480))
-                buf_th = io.BytesIO()
-                th.save(buf_th, format='WEBP', quality=70)
+                ok_proc = _r2_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
+                if ok_proc:
+                    image_url = _r2_url(proc_key)
+                th = img.copy(); th.thumbnail((480, 480))
+                buf_th = io.BytesIO(); th.save(buf_th, format='WEBP', quality=70)
                 th_key = f"thumbs/{base}_thumb.webp"
-                ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
-                orig_key = f"originals/{base}{ext}"
-                ok_orig = _minio_put_bytes(orig_key, content, content_type=uf.content_type or 'application/octet-stream')
-                image_url = _minio_url(proc_key) if ok_proc else None
-                thumb_url = _minio_url(th_key) if ok_th else None
-                original_url = _minio_url(orig_key) if ok_orig else None
+                ok_th = _r2_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+                if ok_th:
+                    thumb_url = _r2_url(th_key)
             except Exception:
                 pass
+            if not image_url:
+                image_url = original_url
+            if not thumb_url:
+                thumb_url = image_url or original_url
             
-            if not (image_url and thumb_url and original_url):
+            if not original_url:
                 orig_path = os.path.join(originals, base + ext)
                 proc_path = os.path.join(processed, base + '.webp')
                 thumb_path = os.path.join(thumbs, base + '_thumb.webp')
@@ -707,14 +810,14 @@ def upload_photos(request: Request, payload: dict = Depends(auth_required), file
     conn.close()
     return {'ok': True, 'items': items}
 
-@app.post('/api/admin/minio-import')
-def admin_minio_import(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
+@app.post('/api/admin/r2-import')
+def admin_r2_import(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
     role_required(payload, 'admin')
     require_csrf(request, payload)
-    key = _minio_key_from_url(url) or (url or '').strip()
+    key = _r2_key_from_url(url) or (url or '').strip()
     if not key:
         raise HTTPException(status_code=400, detail='无效URL')
-    data = _minio_get_bytes(key)
+    data = _r2_get_bytes(key)
     if not data:
         raise HTTPException(status_code=404, detail='对象不存在或不可读取')
     base = os.path.splitext(os.path.basename(key))[0]
@@ -728,18 +831,18 @@ def admin_minio_import(request: Request, payload: dict = Depends(auth_required),
         buf_proc = io.BytesIO()
         img_copy.save(buf_proc, format='WEBP', quality=80)
         proc_key = f"processed/{base}.webp"
-        ok_proc = _minio_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
+        ok_proc = _r2_put_bytes(proc_key, buf_proc.getvalue(), content_type='image/webp')
         th = img.copy()
         th.thumbnail((480, 480))
         buf_th = io.BytesIO()
         th.save(buf_th, format='WEBP', quality=70)
         th_key = f"thumbs/{base}_thumb.webp"
-        ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
-        image_url = _minio_url(proc_key) if ok_proc else None
-        thumb_url = _minio_url(th_key) if ok_th else None
+        ok_th = _r2_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+        image_url = _r2_url(proc_key) if ok_proc else None
+        thumb_url = _r2_url(th_key) if ok_th else None
     except Exception:
         pass
-    original_url = _minio_url(key)
+    original_url = _r2_url(key)
     conn = get_conn()
     with conn.cursor() as cur:
         t = title or os.path.basename(key)
@@ -757,8 +860,8 @@ def admin_minio_import(request: Request, payload: dict = Depends(auth_required),
     conn.close()
     return {'ok': True, 'id': photo_id, 'image_url': image_url or original_url, 'thumb_url': thumb_url or image_url or original_url}
 
-@app.post('/api/admin/minio-upload')
-def admin_minio_upload(request: Request, payload: dict = Depends(auth_required), file: UploadFile = File(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
+@app.post('/api/admin/r2-upload')
+def admin_r2_upload(request: Request, payload: dict = Depends(auth_required), file: UploadFile = File(...), title: str = Form(None), description: str = Form(None), camera: str = Form(None), settings: str = Form(None), category: str = Form(None), tags: str = Form(None)):
     role_required(payload, 'admin')
     require_csrf(request, payload)
     base = f"{int(datetime.utcnow().timestamp()*1000)}-{os.urandom(4).hex()}"
@@ -767,21 +870,26 @@ def admin_minio_upload(request: Request, payload: dict = Depends(auth_required),
     image_url = None
     thumb_url = None
     original_url = None
+    ok_orig = _r2_put_bytes(f"originals/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
+    if ok_orig:
+        original_url = _r2_url(f"originals/{base}{ext}")
     try:
         img = Image.open(io.BytesIO(content))
         img_copy = img.copy(); img_copy.thumbnail((2000, 2000))
         buf_proc = io.BytesIO(); img_copy.save(buf_proc, format='WEBP', quality=80)
         th = img.copy(); th.thumbnail((480, 480))
         buf_th = io.BytesIO(); th.save(buf_th, format='WEBP', quality=70)
-        ok_proc = _minio_put_bytes(f"processed/{base}.webp", buf_proc.getvalue(), content_type='image/webp')
-        ok_th = _minio_put_bytes(f"thumbs/{base}_thumb.webp", buf_th.getvalue(), content_type='image/webp')
-        ok_orig = _minio_put_bytes(f"originals/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
-        image_url = _minio_url(f"processed/{base}.webp") if ok_proc else None
-        thumb_url = _minio_url(f"thumbs/{base}_thumb.webp") if ok_th else None
-        original_url = _minio_url(f"originals/{base}{ext}") if ok_orig else None
+        ok_proc = _r2_put_bytes(f"processed/{base}.webp", buf_proc.getvalue(), content_type='image/webp')
+        ok_th = _r2_put_bytes(f"thumbs/{base}_thumb.webp", buf_th.getvalue(), content_type='image/webp')
+        image_url = _r2_url(f"processed/{base}.webp") if ok_proc else None
+        thumb_url = _r2_url(f"thumbs/{base}_thumb.webp") if ok_th else None
     except Exception:
         pass
-    if not (image_url and thumb_url and original_url):
+    if not image_url:
+        image_url = original_url
+    if not thumb_url:
+        thumb_url = image_url or original_url
+    if not original_url:
         uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
         originals = os.path.join(uploads_root, 'originals')
         processed = os.path.join(uploads_root, 'processed')
@@ -819,14 +927,14 @@ def admin_minio_upload(request: Request, payload: dict = Depends(auth_required),
     conn.close()
     return {'ok': True, 'id': photo_id, 'image_url': image_url, 'thumb_url': thumb_url}
 
-@app.post('/api/admin/minio-delete')
-def admin_minio_delete(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), remove_related: bool = Form(True)):
+@app.post('/api/admin/r2-delete')
+def admin_r2_delete(request: Request, payload: dict = Depends(auth_required), url: str = Form(...), remove_related: bool = Form(True)):
     role_required(payload, 'admin')
     require_csrf(request, payload)
-    key = _minio_key_from_url(url) or (url or '').strip()
+    key = _r2_key_from_url(url) or (url or '').strip()
     if not key:
         raise HTTPException(status_code=400, detail='无效URL')
-    _minio_remove(key)
+    _r2_remove(key)
     if not remove_related:
         return {'ok': True}
     conn = get_conn()
@@ -838,18 +946,18 @@ def admin_minio_delete(request: Request, payload: dict = Depends(auth_required),
             cur.execute('SELECT id, image_url, thumb_url FROM home_carousel WHERE photo_id=%s', (pid,))
             related = cur.fetchall()
             for hc in related:
-                ik = _minio_key_from_url(hc.get('image_url') or '')
-                tk = _minio_key_from_url(hc.get('thumb_url') or '')
+                ik = _r2_key_from_url(hc.get('image_url') or '')
+                tk = _r2_key_from_url(hc.get('thumb_url') or '')
                 if ik:
-                    _minio_remove(ik)
+                    _r2_remove(ik)
                 if tk:
-                    _minio_remove(tk)
+                    _r2_remove(tk)
                 cur.execute('DELETE FROM home_carousel WHERE id=%s', (hc['id'],))
             for u in [photo.get('image_url'), photo.get('thumb_url'), photo.get('original_url')]:
                 if u:
-                    k = _minio_key_from_url(u)
+                    k = _r2_key_from_url(u)
                     if k:
-                        _minio_remove(k)
+                        _r2_remove(k)
             cur.execute('DELETE FROM photo_tags WHERE photo_id=%s', (pid,))
             cur.execute('DELETE FROM likes WHERE photo_id=%s', (pid,))
             cur.execute('DELETE FROM favorites WHERE photo_id=%s', (pid,))
@@ -902,10 +1010,10 @@ def admin_add_carousel(request: Request, payload: dict = Depends(auth_required),
     buf_th = io.BytesIO(); thumb.save(buf_th, format='WEBP', quality=75)
     car_key = f"carousel/{base}.webp"
     th_key = f"carousel_thumbs/{base}_thumb.webp"
-    ok_img = _minio_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
-    ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
-    image_url = _minio_url(car_key) if ok_img else None
-    thumb_url = _minio_url(th_key) if ok_th else None
+    ok_img = _r2_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
+    ok_th = _r2_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+    image_url = _r2_url(car_key) if ok_img else None
+    thumb_url = _r2_url(th_key) if ok_th else None
     if not (image_url and thumb_url):
         uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
         car_dir = os.path.join(uploads_root, 'carousel')
@@ -973,12 +1081,12 @@ def admin_delete_carousel(cid: int, request: Request, payload: dict = Depends(au
             raise HTTPException(status_code=404, detail='轮播图不存在')
         image = os.path.join(car_dir, os.path.basename(row['image_url'] or ''))
         thumb = os.path.join(car_thumbs, os.path.basename(row['thumb_url'] or ''))
-        ik = _minio_key_from_url(row.get('image_url') or '')
-        tk = _minio_key_from_url(row.get('thumb_url') or '')
+        ik = _r2_key_from_url(row.get('image_url') or '')
+        tk = _r2_key_from_url(row.get('thumb_url') or '')
         if ik:
-            _minio_remove(ik)
+            _r2_remove(ik)
         if tk:
-            _minio_remove(tk)
+            _r2_remove(tk)
         cur.execute('DELETE FROM home_carousel WHERE id=%s', (cid,))
     conn.close()
     try:
@@ -1022,10 +1130,10 @@ def admin_replace_carousel(cid: int, request: Request, payload: dict = Depends(a
         buf_th = io.BytesIO(); thumb.save(buf_th, format='WEBP', quality=75)
         car_key = f"carousel/{base}.webp"
         th_key = f"carousel_thumbs/{base}_thumb.webp"
-        ok_img = _minio_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
-        ok_th = _minio_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
-        image_url = _minio_url(car_key) if ok_img else None
-        thumb_url = _minio_url(th_key) if ok_th else None
+        ok_img = _r2_put_bytes(car_key, buf_img.getvalue(), content_type='image/webp')
+        ok_th = _r2_put_bytes(th_key, buf_th.getvalue(), content_type='image/webp')
+        image_url = _r2_url(car_key) if ok_img else None
+        thumb_url = _r2_url(th_key) if ok_th else None
         if not (image_url and thumb_url):
             proc_path = os.path.join(car_dir, base + '.webp')
             thumb_path = os.path.join(car_thumbs, base + '_thumb.webp')
@@ -1078,8 +1186,8 @@ def admin_add_home_video(request: Request, payload: dict = Depends(auth_required
     content = file.file.read()
     uploads_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'uploads'))
     videos_dir = os.path.join(uploads_root, 'videos')
-    ok = _minio_put_bytes(f"videos/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
-    video_url = _minio_url(f"videos/{base}{ext}") if ok else None
+    ok = _r2_put_bytes(f"videos/{base}{ext}", content, content_type=file.content_type or 'application/octet-stream')
+    video_url = _r2_url(f"videos/{base}{ext}") if ok else None
     if not video_url:
         path = os.path.join(videos_dir, base + ext)
         with open(path, 'wb') as out:
@@ -1108,9 +1216,9 @@ def admin_delete_home_video(vid: int, request: Request, payload: dict = Depends(
             conn.close()
             raise HTTPException(status_code=404, detail='视频不存在')
         u = row['video_url']
-        k = _minio_key_from_url(u)
+        k = _r2_key_from_url(u)
         if k:
-            _minio_remove(k)
+            _r2_remove(k)
         p = os.path.join(videos_dir, os.path.basename(u or ''))
         cur.execute('DELETE FROM home_videos WHERE id=%s', (vid,))
     conn.close()
@@ -1203,16 +1311,16 @@ def delete_photo(photo_id: int, request: Request, payload: dict = Depends(auth_r
             cur.execute('DELETE FROM home_carousel WHERE id=%s', (hc['id'],))
             try:
                 if hc.get('image_url'):
-                    key = _minio_key_from_url(hc['image_url'])
+                    key = _r2_key_from_url(hc['image_url'])
                     if key:
-                        _minio_remove(key)
+                        _r2_remove(key)
                     p = os.path.join(car_dir, os.path.basename(hc['image_url']))
                     if os.path.exists(p):
                         os.remove(p)
                 if hc.get('thumb_url'):
-                    key = _minio_key_from_url(hc['thumb_url'])
+                    key = _r2_key_from_url(hc['thumb_url'])
                     if key:
-                        _minio_remove(key)
+                        _r2_remove(key)
                     t = os.path.join(car_thumbs, os.path.basename(hc['thumb_url']))
                     if os.path.exists(t):
                         os.remove(t)
@@ -1227,9 +1335,9 @@ def delete_photo(photo_id: int, request: Request, payload: dict = Depends(auth_r
     try:
         for u in [photo.get('image_url'), photo.get('thumb_url'), photo.get('original_url')]:
             if u:
-                key = _minio_key_from_url(u)
+                key = _r2_key_from_url(u)
                 if key:
-                    _minio_remove(key)
+                    _r2_remove(key)
             if u:
                 
                 dirs = [processed, thumbs, car_dir, car_thumbs]
