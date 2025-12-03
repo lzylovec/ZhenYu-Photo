@@ -1,0 +1,45 @@
+services:
+  # 后端服务
+  - type: web
+    name: person-photo-backend
+    runtime: python
+    # 显式指定 Python 版本，推荐 3.11+
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      # 部署时需要在 Render 面板填入 DATABASE_URL
+      - key: DATABASE_URL
+        sync: false 
+      - key: JWT_SECRET
+        generateValue: true
+      # 部署后，需要把前端的域名加到这里，用逗号分隔
+      - key: ALLOWED_REFERRERS
+        sync: false
+      - key: ADMIN_PASSWORD
+        value: admin123
+    # 构建命令：安装依赖
+    buildCommand: pip install -r python_server/requirements.txt
+    # 启动命令：使用 uvicorn 启动
+    startCommand: uvicorn python_server.main:app --host 0.0.0.0 --port $PORT
+    
+  # 前端静态站点
+  - type: static
+    name: person-photo-frontend
+    runtime: node
+    # 构建命令：进入 client 目录安装并构建
+    buildCommand: cd client && npm install && npm run build
+    # 发布目录：构建产物所在位置
+    publishDir: client/dist
+    # 环境变量：自动获取后端服务的 URL 并加上 /api 后缀
+    envVars:
+      - key: VITE_API_BASE
+        fromService:
+          type: web
+          name: person-photo-backend
+          envVarKey: RENDER_EXTERNAL_URL
+          value: ${RENDER_EXTERNAL_URL}/api
+    # 单页应用 (SPA) 重写规则
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

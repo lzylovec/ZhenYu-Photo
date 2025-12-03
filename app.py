@@ -8,13 +8,15 @@ REQUIRED = [
     'uvicorn',
     'PyJWT',
     'bcrypt',
-    'pymysql',
     'python-multipart',
     'Pillow',
+    'psycopg2-binary',
 ]
 
 def _spec(name: str):
     m = name.replace('-', '_')
+    if name == 'psycopg2-binary':
+        m = 'psycopg2'
     return importlib.util.find_spec(m)
 
 def ensure_deps():
@@ -35,11 +37,6 @@ def ensure_deps():
 
 def default_env():
     env = {
-        'MYSQL_HOST': '127.0.0.1',
-        'MYSQL_PORT': '3306',
-        'MYSQL_USER': 'root',
-        'MYSQL_PASSWORD': 'liutaotao0202',
-        'MYSQL_DB': 'person_photo',
         'JWT_SECRET': 'change_me',
         'ADMIN_USERNAME': 'admin',
         'ADMIN_PASSWORD': 'admin123',
@@ -81,7 +78,7 @@ def main():
     default_env()
     print('Python解释器:', sys.executable)
     print('工作目录:', root)
-    print('数据库:', os.getenv('MYSQL_USER'), '@', os.getenv('MYSQL_HOST'), ':', os.getenv('MYSQL_PORT'), '/', os.getenv('MYSQL_DB'))
+    print('数据库:', os.getenv('DATABASE_URL'))
     ensure_deps()
     # 确保可导入包
     if not os.getenv('PYTHONPATH'):
@@ -98,16 +95,3 @@ def main():
     try:
         from python_server.main import app as fastapi_app
         uvicorn.run(fastapi_app, host=host, port=port)
-    except Exception as e:
-        print('导入 python_server.main 失败:', e)
-        import runpy
-        mod_path = os.path.join(os.getcwd(), 'python_server', '__main__.py')
-        print('使用运行路径加载:', mod_path)
-        g = runpy.run_path(mod_path)
-        fastapi_app = g.get('app')
-        if fastapi_app is None:
-            raise RuntimeError('未找到 app 实例')
-        uvicorn.run(fastapi_app, host=host, port=port)
-
-if __name__ == '__main__':
-    main()

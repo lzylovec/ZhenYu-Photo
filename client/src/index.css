@@ -2,7 +2,8 @@
 :root {
   /* 轻量智感：雾白铅灰配色 */
   --color-bg: #f6f7f9;
-  --color-card: #fbfbfd;
+  --color-card: rgba(255, 255, 255, 0.65);
+  /* 磨砂玻璃背景 - 半透明白色 */
   --color-primary: #495057;
   --color-primary-light: #6c757d;
   --color-secondary: #8aa0b4;
@@ -10,9 +11,12 @@
   --color-text: #3d454d;
   --color-text-light: #7d848c;
   --color-muted: #a2a8b0;
-  --color-border: #e6e8eb;
+  --color-border: rgba(255, 255, 255, 0.6);
+  /* 玻璃边框 - 更透明 */
   --color-border-dark: #cfd3da;
   --color-overlay: rgba(57, 66, 75, 0.78);
+  --glass-blur: blur(20px);
+  /* 磨砂质感 */
 
   /* 字体和排版 */
   --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -25,9 +29,11 @@
   --radius: 16px;
   --radius-sm: 8px;
   --radius-lg: 24px;
-  --shadow: 0 1px 8px rgba(57, 66, 75, 0.06), 0 1px 2px rgba(57, 66, 75, 0.04);
-  --shadow-hover: 0 6px 16px rgba(57, 66, 75, 0.09);
-  --shadow-lg: 0 12px 32px rgba(57, 66, 75, 0.12);
+
+  /* 空气感微投影 - 大扩散、低透明度 */
+  --shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.05);
+  --shadow-hover: 0 20px 60px -12px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 25px 80px -15px rgba(0, 0, 0, 0.1);
 
   /* 过渡动画 */
   --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
@@ -73,6 +79,8 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--color-text);
   cursor: pointer;
   transition: var(--transition);
@@ -94,6 +102,8 @@ body {
   background: var(--color-primary);
   color: #fff;
   border-color: var(--color-primary);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .btn-primary:hover {
@@ -108,6 +118,8 @@ body {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--color-text);
   font-size: 15px;
   transition: var(--transition);
@@ -124,6 +136,8 @@ body {
 
 .card {
   background: var(--color-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: var(--spacing-lg);
@@ -136,6 +150,7 @@ body {
 .card:hover {
   box-shadow: var(--shadow-hover);
   transform: translateY(-2px);
+  background: rgba(255, 255, 255, 0.75);
 }
 
 /* 导航栏 */
@@ -145,12 +160,12 @@ body {
   justify-content: space-between;
   padding: 12px 20px;
   background: var(--color-card);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   box-shadow: var(--shadow);
   position: sticky;
   top: 0;
   z-index: 10;
-  backdrop-filter: blur(10px);
-  background: rgba(255, 255, 255, 0.82);
   border: 1px solid var(--color-border);
   border-radius: 12px;
   overflow: hidden;
@@ -175,8 +190,10 @@ body {
 
 .nav--compact {
   padding: 10px 18px;
-  background: rgba(255, 255, 255, 0.78);
-  box-shadow: 0 6px 16px rgba(57, 66, 75, 0.08);
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-hover);
   border-radius: 10px;
 }
 
@@ -592,7 +609,7 @@ body {
   right: 0;
   bottom: 0;
   height: 120px;
-  background: linear-gradient(to bottom, rgba(0,0,0,0) 0%, rgba(246, 247, 249, 0.92) 80%, var(--color-bg) 100%);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 0%, rgba(246, 247, 249, 0.92) 80%, var(--color-bg) 100%);
   pointer-events: none;
 }
 
@@ -762,34 +779,64 @@ body {
 }
 
 @keyframes flowSlide {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 @keyframes irSlideLeft {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-100%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-100%);
+  }
 }
 
 @keyframes irSlideRight {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(100%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
 }
 
 /* 不规则轮播无缝循环（基于内容翻倍，移动50%形成闭环） */
 @keyframes irLoopLeft {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); }
+  0% {
+    transform: translateX(0);
+  }
+
+  100% {
+    transform: translateX(-50%);
+  }
 }
 
 @keyframes irLoopRight {
-  0% { transform: translateX(-50%); }
-  100% { transform: translateX(0); }
+  0% {
+    transform: translateX(-50%);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
 }
 
 @keyframes floatY {
-  0% { transform: translateY(0); }
-  100% { transform: translateY(6px); }
+  0% {
+    transform: translateY(0);
+  }
+
+  100% {
+    transform: translateY(6px);
+  }
 }
 
 .ribbon-mask-top {
@@ -798,7 +845,7 @@ body {
   right: 0;
   top: 0;
   height: 18px;
-  background: linear-gradient(to bottom, var(--color-bg), rgba(246,247,249,0));
+  background: linear-gradient(to bottom, var(--color-bg), rgba(246, 247, 249, 0));
   pointer-events: none;
 }
 
@@ -808,7 +855,7 @@ body {
   right: 0;
   bottom: 0;
   height: 18px;
-  background: linear-gradient(to top, var(--color-bg), rgba(246,247,249,0));
+  background: linear-gradient(to top, var(--color-bg), rgba(246, 247, 249, 0));
   pointer-events: none;
 }
 
