@@ -89,7 +89,7 @@ def main():
     print('sys.path[0]:', sys.path[0])
 
     import uvicorn
-    host = os.getenv('HOST', '127.0.0.1')
+    host = os.getenv('HOST', '0.0.0.0')
     port = int(os.getenv('PORT', '4002'))
     print('后端地址:', f'http://{host}:{port}/api')
     try:
