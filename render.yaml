@@ -8,7 +8,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.9
       # 部署时需要在 Render 面板填入 DATABASE_URL
-      - key: DATABASE_URL
+      - key: postgresql://postgres.gszwsddbkhgxjsbwaxhw:liutaotao0202@aws-1-ap-south-1.pooler.supabase.com:6543/postgres
         sync: false 
       - key: JWT_SECRET
         generateValue: true
